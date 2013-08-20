@@ -1,5 +1,5 @@
 var portName = "/dev/ttyUSB0";
-var tagType  = "14443A"
+var tagType  = "iso15693"
 var sys = require("sys");
 var com = require("serialport");
 var events = require("events");
@@ -30,33 +30,36 @@ var readData = '';  // this stores the buffer
 reader.on('open',function() {
   console.log('Port open');
   this.emit('initialize', readerConfig.initialize['init']);
-  this.emit('initcodes', readerConfig.protocols[tagType]['initcodes']);
-  readloop(readerConfig.protocols['14443A']);
+  readloop(readerConfig.protocols[tagType]);
 });
 
 // Event Listeners
 
 // initialize
 reader.on('initialize', function(cmd, callback) {
-  reader.write(cmd, function(err, results) {
-    if (err){ console.log("err: "+err)}
-    else {console.log('initialized reader...');}
+  reader.write(cmd, function(err) {
+    if (err){ callback(err)}
+    else {
+      console.log('initialized reader...')
+      // initialized? run initcodes
+      this.emit('initcodes', readerConfig.protocols[tagType]['initcodes']);
+      }
   });
 });
 
 // initcodes
 reader.on('initcodes', function(cmd, callback) {
-  reader.write(cmd['register_write_request'], function(err,results) {
-    if (err){ console.log("err: "+err)}
+  reader.write(cmd['register_write_request'], function(err) {
+    if (err){ callback(err)}
     else { 
-      reader.write(cmd['agc_enable'], function(err,results) {
-        if (err){ console.log("err: "+err)}
+      reader.write(cmd['agc_enable'], function(err) {
+        if (err){ callback(err)}
         else { 
-          reader.write(cmd['am_input'], function(err,results) {
-          if (err){ console.log("err: "+err)}
+          reader.write(cmd['am_input'], function(err) {
+          if (err){ callback(err)}
           else { 
             console.log("finished initializing!");
-            return results;
+            callback();
             }
           });
         }
@@ -83,6 +86,11 @@ reader.on('data', function( data ) {
   }
 });
 
+// tag
+reader.on('tag', function( msg ) {
+  console.log("tag id: " + msg );
+});
+
 // error
 reader.on('error', function( msg ) {
   console.log("error: " + msg );
@@ -107,26 +115,27 @@ var hex2a = function(hex) {
   return str;
 }
 
+// query command
 var query = function(cmd, callback) {
-  reader.write(cmd, function(err,callback) {
-    if (err){ console.log("err: "+err)}
-    console.log("ran cmd!");
+  reader.write(cmd, function(err) {
+    if (err){ callback(err) }
+    console.log("ran cmd: "+cmd);
   });
 }
 
-// inventory lookup
+// inventory command
 var inventory = function(cmd, callback) {
-  reader.write(cmd, function(err,result) {
-    if (err){ console.log("err: "+err)}
+  reader.write(cmd, function(err) {
+    if (err) { callback(err)}
     else { console.log("ran inventory!") }
   });
 }
 
-var readloop = function(protocol) {
+// read loop
+var readloop = function(protocol, callback) {
   setInterval(function (){ 
-    inventory(protocol['inventory'], function(err, result) {
-      if (err) { return err; }
-      else return result;
+    query(protocol['inventory'], function(err) {
+      if (err) { callback(err) }
     });
   }, 1000);
 }
