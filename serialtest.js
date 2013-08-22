@@ -9,7 +9,7 @@ var readerConfig = require('./univelop_500b.json');
 var portName = "/dev/ttyUSB0";
 var tagType  = "iso15693"
 var length_to_read = 5;  // total length to read - 1 
-var bytes_per_read = 0;  // no bytes per read - 1
+var bytes_per_read = 1;  // no bytes per read - 1
 
 // data variables
 var tagData = ''; // this stores the tag data
@@ -24,7 +24,8 @@ var reader = new com.SerialPort(portName , {
   parity: 'none',
   stopBits: 1,
   flowControl: false,
-  parser: com.parsers.readline('\r\n')
+  buffersize: 1024
+  //parser: com.parsers.readline('\r\n')
 }, true); // this is the openImmediately flag [default is true]
 
 /* Workflow:
@@ -65,7 +66,8 @@ var initcodes = function(cmd, callback) {
           reader.write(cmd['am_input'], function(err) {
           if (err){ callback(err)}
           else { 
-            console.log("finished initializing!");
+            console.log("ran initcodes!");
+            
             }
           });
         }
@@ -86,18 +88,18 @@ var dec2hex = function(d) {
   return ("0"+(Number(d).toString(16))).slice(-2).toUpperCase()
 }
 
-// tag loop, do inventory check
-var scanLoop = function(protocol, callback) {
-  var scanTagLoop = setInterval(function (){ 
-    // run inventory check in intervals
-    inventory(protocol['inventory'], function(err) {
-      if (err) { callback(err) }
-    });
-  }, 1000);
+// TAG LOOP FUNCTIONS - do inventory check
+var scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[tagType]) }, 1000 );
+  
+var scanTagLoop = function (protocol, callback){ 
+  // run inventory check in intervals
+  inventory(protocol['inventory'], function(err) {
+    if (err) { console.log(err) }
+  });
 }
 
 var stopScan = function() {
-  clearInterval(scanTagLoop);
+  clearInterval(scanLoop);
 }
 
 // inventory command
@@ -113,16 +115,37 @@ var inventory = function(cmd, callback) {
     }
   });
 }
+// END TAG LOOP FUNCTIONS
 
 // read tag loop
 var readTag = function( tag, callback ) {
-  stopScan();
-  reader.removeAllListeners('scanloop');
+  console.log("running readTag: "+tag);
+  reader.emit('initcodes', readerConfig.protocols[tagType]['initcodes']);
+  console.log("found tag id: " + tag );
+  readData = '';  // reset data
+  offset = start_offset;
+  console.log("sending readtagdata event, offset: "+offset );
+  reader.emit('readtagdata', offset);
+}
 
-  console.log("tag id: " + tag );
-  tagData = '';  // reset data
-  var offset = start_offset;
-  reader.emit('tagdata', offset);
+// readtagdata
+// from rfidgeek:
+// def issue_command(protocol, cmd, cmd_length, options={})
+// read = issue_command(protocol, "18", "0C", :command_code => "23", :offset => "%02X" % offset, :bytes_per_read => "%02X" % bytes_per_read)
+// @command = "01" + cmd_length.to_s + "000304" + cmd.to_s + options[:flags] + options[:command_code] + options[:offset] + options[:bytes_per_read] + "0000"
+
+var readTagData = function( offset, callback ) {
+  if(offset != length_to_read) {
+    cmd = ['01','0C','00','03','04','18','00','23', dec2hex(offset), dec2hex(bytes_per_read), '00', '00'].join('');
+    console.log("offset: "+offset+ " tagdata cmd: " + cmd );
+    reader.write(cmd, function(err) {
+      if(err) { throw new Error (err) }
+      offset += bytes_per_read +1;
+      process.nextTick(function() {
+        readTagData(offset);
+      });
+    });
+  }
 }
 
 // query command
@@ -135,58 +158,54 @@ var query = function(cmd, callback) {
   });
 }
 
-var tagData = function( offset, callback ) {
-  cmd = ['01','0C','00','03','04','18','00','23', dec2hex(offset), dec2hex(bytes_per_read), '00', '00'].join('');
-  console.log("tagdata cmd: " + cmd );
-  reader.write(cmd);
-}
-
 var rfidData = function( data, callback) {
-  console.log("rfiddata received: " + data );
-  readData += data;
-  if (readData.length == 16 || data == 'W_OK') {
+  var str = hex2a(data);
+  console.log("rfiddata received: " + str );
+  readData += str;
+  if (readData.length == 16 || str == 'W_OK') {
     console.log("got full tag: "+readData);
     reader.removeListener('readtag', readTag);
     reader.emit('scanloop', scanLoop);
   } else {
-    offset += bytes_per_read + 1
+    offset += bytes_per_read;
+    reader.emit('readtagdata', offset);
   }
 }
 // EVENT LISTENERS
 
 reader.on('initialize', initialize);
 reader.on('initcodes', initcodes);
-reader.on('scanloop', scanLoop);
+reader.on('scanloop', scanTagLoop);
 reader.on('readtag', readTag);
 reader.on('rfiddata', rfidData);
-reader.on('tagdata', tagData);
+reader.on('readtagdata', readTagData);
 
 // on data event, if
 // fire 'tag' event if comma in result
 // fire rfiddata if data in square brackets
 reader.on('data', function( data ) {
   console.log("received: "+data);
+  data = String(data)
   if(!!data) {
-    if (/,..]/.test(data) == true) { // we have a tag id! (followed by comma and position)
-      var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // strip away empty tag location ids (eg. ',40) 
-      if (tag) {
+    if (/,..]/.test(data) == true) {              // we have an inventory response! (comma and position)
+      var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
+      console.log(tag);
+      if (tag) {                                  // do nothing unless actual tag is found
+        stopScan();                               // stop scanning for tags
+        //reader.removeAllListeners('scanloop');    
         reader.emit('readtag', tag[1]);
       }
     }
-    else if (/\[.+\]/.test(data) == true) { // then we have received data
-      var rfiddata = data.match(/\[00(.*?)\]/);
+    else if (/\[.+\]/.test(data) == true) {       // we have response data! (within brackets, no comma)
+      
+      var rfiddata = data.match(/\[00(.+)\]/);
+      console.log("response data! "+rfiddata);
       if (rfiddata) {
         reader.emit('rfiddata', rfiddata[1]);
       }
     }
   }
 });
-
-// tagdata
-// from rfidgeek:
-// def issue_command(protocol, cmd, cmd_length, options={})
-// read = issue_command(protocol, "18", "0C", :command_code => "23", :offset => "%02X" % offset, :bytes_per_read => "%02X" % bytes_per_read)
-// @command = "01" + cmd_length.to_s + "000304" + cmd.to_s + options[:flags] + options[:command_code] + options[:offset] + options[:bytes_per_read] + "0000"
 
 // error
 reader.on('error', function( msg ) {
