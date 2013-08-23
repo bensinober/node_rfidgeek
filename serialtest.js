@@ -25,7 +25,6 @@ var reader = new com.SerialPort(portName , {
   stopBits: 1,
   flowControl: false,
   buffersize: 1024
-  //parser: com.parsers.readline('\r\n')
 }, true); // this is the openImmediately flag [default is true]
 
 /* Workflow:
@@ -33,11 +32,57 @@ var reader = new com.SerialPort(portName , {
   * emit initialize event
   * turns on the scan loop
 */
+
+// EVENT LISTENERS
+
 reader.on('open',function() {
   console.log('Port open');
+  
+  reader.on('initialize', initialize);
+  reader.on('initcodes', initcodes);
+  reader.on('scanloop', scanTagLoop);
+  reader.on('readtag', readTag);
+  reader.on('rfiddata', rfidData);
+  reader.on('readtagdata', readTagData);
+  
+  // unregister tag if removed
+  reader.on('tagremoved', function() {
+    console.log("Tag removed");
+    tagData = '';
+  });
+  
+  // register new tag and start readloop
+  reader.on('tagfound', function( tag ) {
+    if (tag != tagData) {                     // do nothing unless new tag is found
+      console.log("New tag found!");
+      tagData = tag;                          // register new tag
+      stopScan();                             // stop scanning for tags
+      //reader.removeAllListeners('scanloop');    
+      reader.emit('readtag', tag);         // start reading tag
+    }
+  });
+
+  reader.on('rfidresult', function(data) {
+    console.log("Jippi! "+data);
+  });
+  
+  reader.on('data', gotData);
+  
   reader.emit('initialize', readerConfig.initialize['init']);
   reader.emit('scanloop', readerConfig.protocols[tagType]);
 });
+
+// error
+reader.on('error', function( msg ) {
+  console.log("error: " + msg );
+});
+
+// close
+reader.on('close', function ( err ) {
+  console.log('port closed');
+});
+
+// END EVENT LISTENERS
 
 /*
   FUNCTIONS
@@ -140,7 +185,7 @@ var readTagData = function( offset, callback ) {
     console.log("offset: "+offset+ " tagdata cmd: " + cmd );
     reader.write(cmd, function(err) {
       if(err) { throw new Error (err) }
-      offset += bytes_per_read +1;
+      offset += bytes_per_read ;
       process.nextTick(function() {
         readTagData(offset);
       });
@@ -163,47 +208,41 @@ var rfidData = function( data, callback) {
   console.log("rfiddata received: " + str );
   // HERE! do a check on string content!
   readData += str;
-  if (readData.length == 16 || str == 'W_OK') {
+  if (readData.length == 8 || str == 'W_OK') {
     console.log("got full tag: "+readData);
     reader.removeListener('readtag', readTag);    
-    reader.emit('rfidresult', readTag);
+    reader.emit('rfidresult', readData);
     reader.emit('scanloop', scanLoop);
   } else {
     offset += bytes_per_read;
     reader.emit('readtagdata', offset);
   }
 }
-// EVENT LISTENERS
-
-reader.on('initialize', initialize);
-reader.on('initcodes', initcodes);
-reader.on('scanloop', scanTagLoop);
-reader.on('readtag', readTag);
-reader.on('rfiddata', rfidData);
-reader.on('readtagdata', readTagData);
 
 // on data event, do two checks:
-// fire 'tag' event if comma in result
-// fire rfiddata if data in square brackets
-reader.on('data', function( data ) {
+  // fire 'tag' event if comma in result
+  // fire rfiddata if data in square brackets
+var gotData = function( data ) {
   console.log("received: "+data);
   data = String(data)
   if(!!data) {
     // TAG
-    switch (data) {
-    case (/,40]/.test(data):  
+    if (/,40]/.test(data)) {
+      console.log('no tag ...');
       if (tagData) {                              // no or empty tag found
         reader.emit('tagremoved')
       }
-    case (/,..]/.test(data):                      // we have an inventory response! (comma and position)
+    } 
+    else if (/,..]/.test(data)) {                      // we have an inventory response! (comma and position)
       var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
-      console.log(tag);
+      console.log('tag!: '+tag);
       if (tag && tag[1]) {   
         reader.emit('tagfound', tag[1]);
       }
     }
+    
     // RFID DATA
-    case (/\[.+\]/.test(data):                    // we have response data! (within brackets, no comma)
+    else if (/\[.+\]/.test(data)) {                   // we have response data! (within brackets, no comma)
       var rfiddata = data.match(/\[00(.+)\]/);
       console.log("response data! "+rfiddata);
       if (rfiddata) {
@@ -211,34 +250,4 @@ reader.on('data', function( data ) {
       }
     }
   }
-});
-
-// unregister tag if removed
-reader.on('tagremoved', function() {
-  console.log("Tag removed");
-  tagData = '';
-});
-
-// register new tag and start readloop
-reader.on('tagfound', function( tag ) {
-  if (tag != tagData) {                     // do nothing unless new tag is found
-    console.log("New tag found!");
-    tagData = tag;                          // register new tag
-    stopScan();                             // stop scanning for tags
-    //reader.removeAllListeners('scanloop');    
-    reader.emit('readtag', tag);         // start reading tag
-  }
-});
-  
-// error
-reader.on('error', function( msg ) {
-  console.log("error: " + msg );
-});
-
-// close
-reader.on('close', function ( err ) {
-  console.log('port closed');
-});
-
-// End Event Listeners
-
+}
