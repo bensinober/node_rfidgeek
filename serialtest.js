@@ -1,6 +1,6 @@
 var sys = require("sys");
 var com = require("serialport");
-var events = require("events");
+//var events = require("events");
 
 // read reader config file
 var readerConfig = require('./univelop_500b.json');
@@ -117,11 +117,10 @@ var inventory = function(cmd, callback) {
 }
 // END TAG LOOP FUNCTIONS
 
-// read tag loop
+// initialize read tag loop
 var readTag = function( tag, callback ) {
-  console.log("running readTag: "+tag);
   reader.emit('initcodes', readerConfig.protocols[tagType]['initcodes']);
-  console.log("found tag id: " + tag );
+  //console.log("found tag id: " + tag );
   readData = '';  // reset data
   offset = start_offset;
   console.log("sending readtagdata event, offset: "+offset );
@@ -134,6 +133,7 @@ var readTag = function( tag, callback ) {
 // read = issue_command(protocol, "18", "0C", :command_code => "23", :offset => "%02X" % offset, :bytes_per_read => "%02X" % bytes_per_read)
 // @command = "01" + cmd_length.to_s + "000304" + cmd.to_s + options[:flags] + options[:command_code] + options[:offset] + options[:bytes_per_read] + "0000"
 
+// read data loop
 var readTagData = function( offset, callback ) {
   if(offset != length_to_read) {
     cmd = ['01','0C','00','03','04','18','00','23', dec2hex(offset), dec2hex(bytes_per_read), '00', '00'].join('');
@@ -161,10 +161,12 @@ var query = function(cmd, callback) {
 var rfidData = function( data, callback) {
   var str = hex2a(data);
   console.log("rfiddata received: " + str );
+  // HERE! do a check on string content!
   readData += str;
   if (readData.length == 16 || str == 'W_OK') {
     console.log("got full tag: "+readData);
-    reader.removeListener('readtag', readTag);
+    reader.removeListener('readtag', readTag);    
+    reader.emit('rfidresult', readTag);
     reader.emit('scanloop', scanLoop);
   } else {
     offset += bytes_per_read;
@@ -180,24 +182,28 @@ reader.on('readtag', readTag);
 reader.on('rfiddata', rfidData);
 reader.on('readtagdata', readTagData);
 
-// on data event, if
+// on data event, do two checks:
 // fire 'tag' event if comma in result
 // fire rfiddata if data in square brackets
 reader.on('data', function( data ) {
   console.log("received: "+data);
   data = String(data)
   if(!!data) {
-    if (/,..]/.test(data) == true) {              // we have an inventory response! (comma and position)
+    // TAG
+    switch (data) {
+    case (/,40]/.test(data):  
+      if (tagData) {                              // no or empty tag found
+        reader.emit('tagremoved')
+      }
+    case (/,..]/.test(data):                      // we have an inventory response! (comma and position)
       var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
       console.log(tag);
-      if (tag) {                                  // do nothing unless actual tag is found
-        stopScan();                               // stop scanning for tags
-        //reader.removeAllListeners('scanloop');    
-        reader.emit('readtag', tag[1]);
+      if (tag && tag[1]) {   
+        reader.emit('tagfound', tag[1]);
       }
     }
-    else if (/\[.+\]/.test(data) == true) {       // we have response data! (within brackets, no comma)
-      
+    // RFID DATA
+    case (/\[.+\]/.test(data):                    // we have response data! (within brackets, no comma)
       var rfiddata = data.match(/\[00(.+)\]/);
       console.log("response data! "+rfiddata);
       if (rfiddata) {
@@ -207,6 +213,23 @@ reader.on('data', function( data ) {
   }
 });
 
+// unregister tag if removed
+reader.on('tagremoved', function() {
+  console.log("Tag removed");
+  tagData = '';
+});
+
+// register new tag and start readloop
+reader.on('tagfound', function( tag ) {
+  if (tag != tagData) {                     // do nothing unless new tag is found
+    console.log("New tag found!");
+    tagData = tag;                          // register new tag
+    stopScan();                             // stop scanning for tags
+    //reader.removeAllListeners('scanloop');    
+    reader.emit('readtag', tag);         // start reading tag
+  }
+});
+  
 // error
 reader.on('error', function( msg ) {
   console.log("error: " + msg );
