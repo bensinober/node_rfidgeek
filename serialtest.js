@@ -57,8 +57,11 @@ reader.on('open',function() {
       console.log("New tag found!");
       tagData = tag;                          // register new tag
       stopScan();                             // stop scanning for tags
-      //reader.removeAllListeners('scanloop');    
-      reader.emit('readtag', tag);         // start reading tag
+      //reader.removeAllListeners('scanloop'); 
+      // HERE!   
+      readTag(tag);
+    } else {
+      console.log("same tag still...");
     }
   });
 
@@ -70,6 +73,7 @@ reader.on('open',function() {
   
   reader.emit('initialize', readerConfig.initialize['init']);
   reader.emit('scanloop', readerConfig.protocols[tagType]);
+  //scanLoop;
 });
 
 // error
@@ -212,7 +216,9 @@ var rfidData = function( data, callback) {
     console.log("got full tag: "+readData);
     reader.removeListener('readtag', readTag);    
     reader.emit('rfidresult', readData);
-    reader.emit('scanloop', scanLoop);
+    //scanloop;
+    //reader.emit('scanloop', readerConfig.protocols[tagType]);
+    scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[tagType]) }, 1000 );
   } else {
     offset += bytes_per_read;
     reader.emit('readtagdata', offset);
@@ -235,8 +241,8 @@ var gotData = function( data ) {
     } 
     else if (/,..]/.test(data)) {                      // we have an inventory response! (comma and position)
       var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
-      console.log('tag!: '+tag);
       if (tag && tag[1]) {   
+        console.log('tag! '+tag[1]);
         reader.emit('tagfound', tag[1]);
       }
     }
