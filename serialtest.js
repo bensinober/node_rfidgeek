@@ -190,6 +190,7 @@ var readTagData = function( offset, callback ) {
     reader.write(cmd, function(err) {
       if(err) { throw new Error (err) }
       offset += bytes_per_read ;
+      // do we need to delay read to next event loop?
       process.nextTick(function() {
         readTagData(offset);
       });
@@ -207,39 +208,44 @@ var query = function(cmd, callback) {
   });
 }
 
+// function rfidData, on rfiddata event
 var rfidData = function( data, callback) {
   var str = hex2a(data);
   console.log("rfiddata received: " + str );
   // HERE! do a check on string content!
   readData += str;
-  if (readData.length == 8 || str == 'W_OK') {
+  // rfid data consumed
+  if (readData.length >= 8 || str == 'W_OK') {
     console.log("got full tag: "+readData);
     reader.removeListener('readtag', readTag);    
     reader.emit('rfidresult', readData);
-    //scanloop;
-    //reader.emit('scanloop', readerConfig.protocols[tagType]);
+    // scanloop;
+    // reader.emit('scanloop', readerConfig.protocols[tagType]);
+    // start new scanloop
     scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[tagType]) }, 1000 );
   } else {
+    // continue reading
     offset += bytes_per_read;
     reader.emit('readtagdata', offset);
   }
 }
 
 // on data event, do two checks:
-  // fire 'tag' event if comma in result
-  // fire rfiddata if data in square brackets
+// fire 'tag' event if comma in result
+// fire rfiddata if data in square brackets
 var gotData = function( data ) {
   console.log("received: "+data);
   data = String(data)
   if(!!data) {
-    // TAG
+    // NO TAG
     if (/,40]/.test(data)) {
       console.log('no tag ...');
-      if (tagData) {                              // no or empty tag found
+      if (tagData) {                              // if tagData exist then tag is considered removed
         reader.emit('tagremoved')
       }
     } 
-    else if (/,..]/.test(data)) {                      // we have an inventory response! (comma and position)
+    // TAG
+    else if (/,..]/.test(data)) {                 // we have an inventory response! (comma and position)
       var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
       if (tag && tag[1]) {   
         console.log('tag! '+tag[1]);
@@ -249,7 +255,7 @@ var gotData = function( data ) {
     
     // RFID DATA
     else if (/\[.+\]/.test(data)) {                   // we have response data! (within brackets, no comma)
-      var rfiddata = data.match(/\[00(.+)\]/);
+      var rfiddata = data.match(/\[00(.+)\]/);        // strip initial 00 response
       console.log("response data! "+rfiddata);
       if (rfiddata) {
         reader.emit('rfiddata', rfiddata[1]);
