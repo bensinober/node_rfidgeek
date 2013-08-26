@@ -1,7 +1,7 @@
 var rfidGeek = (function() {
   
   var com = require("serialport");
-  var ws = require("./websocket");
+  var ws = require("./websocket.js").client;
   ws.connect('ws://localhost:4567');
   
   // VARIABLES

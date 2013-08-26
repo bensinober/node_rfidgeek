@@ -3,14 +3,15 @@
 */
 
 var WebSocketClient = require('websocket').client;
-var ws = new WebSocketClient();
-var socket = '';
 
-ws.on('connectFailed', function(error) {
+client = new WebSocketClient();
+socket = '';
+
+client.on('connectFailed', function(error) {
     console.log('Connect Error: ' + error.toString());
 });
 
-ws.on('connect', function(connection) {
+client.on('connect', function(connection) {
     console.log('WebSocket client connected');
     socket = connection;
     connection.on('error', function(error) {
@@ -32,3 +33,4 @@ ws.on('connect', function(connection) {
     connection.sendUTF("Hello world");
 });
 //ws.connect('ws://localhost:4567', 'websocket-name');
+module.exports.client = client;
