@@ -1,6 +1,8 @@
 var rfidGeek = (function() {
   
   var com = require("serialport");
+  var ws = require("./websocket");
+  ws.connect('ws://localhost:4567');
   
   // VARIABLES
   var portName = "/dev/ttyUSB0";
@@ -49,6 +51,7 @@ var rfidGeek = (function() {
     // unregister tag if removed
     reader.on('tagremoved', function() {
       console.log("Tag removed");
+      ws.send("Tag removed");
       tagData = '';
     });
     
@@ -56,6 +59,7 @@ var rfidGeek = (function() {
     reader.on('tagfound', function( tag ) {
       if (tag != tagData) {                     // do nothing unless new tag is found
         console.log("New tag found!");
+        ws.send("Tag found"+tag);
         tagData = tag;                          // register new tag
         stopScan();                             // stop scanning for tags
         readTag(tag);
@@ -66,6 +70,7 @@ var rfidGeek = (function() {
   
     reader.on('rfidresult', function(data) {
       console.log("Jippi! "+data);
+      ws.send("tnr: "+data);
     });
     
     reader.on('data', gotData);
