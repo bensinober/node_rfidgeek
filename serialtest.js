@@ -1,265 +1,257 @@
-var sys = require("sys");
-var com = require("serialport");
-//var events = require("events");
-
-// read reader config file
-var readerConfig = require('./univelop_500b.json');
-
-// reader variables
-var portName = "/dev/ttyUSB0";
-var tagType  = "iso15693"
-var length_to_read = 5;  // total length to read - 1 
-var bytes_per_read = 1;  // no bytes per read - 1
-
-// data variables
-var tagData = ''; // this stores the tag data
-var readData = '';  // this stores the read buffer
-var start_offset = 1;
-var offset = start_offset;
-        
-// Create new serialport pointer
-var reader = new com.SerialPort(portName , { 
-  baudRate: 115200,
-  dataBits: 8,
-  parity: 'none',
-  stopBits: 1,
-  flowControl: false,
-  buffersize: 1024
-}, true); // this is the openImmediately flag [default is true]
-
-/* Workflow:
-  Reader gets 'open' event, runs:
-  * emit initialize event
-  * turns on the scan loop
-*/
-
-// EVENT LISTENERS
-
-reader.on('open',function() {
-  console.log('Port open');
+var rfidGeek = (function() {
   
-  reader.on('initialize', initialize);
-  reader.on('initcodes', initcodes);
-  reader.on('scanloop', scanTagLoop);
-  reader.on('readtag', readTag);
-  reader.on('rfiddata', rfidData);
-  reader.on('readtagdata', readTagData);
+  var com = require("serialport");
   
-  // unregister tag if removed
-  reader.on('tagremoved', function() {
-    console.log("Tag removed");
-    tagData = '';
+  // VARIABLES
+  var portName = "/dev/ttyUSB0";
+  var tagType  = "iso15693"
+  var length_to_read = 5;  // total length to read - 1 
+  var bytes_per_read = 1;  // no bytes per read - 1
+  
+  // read reader config file
+  var readerConfig = require('./univelop_500b.json');
+  
+  // data variables
+  var tagData = ''; // this stores the tag data
+  var readData = '';  // this stores the read buffer
+  var start_offset = 1;
+  var offset = start_offset;
+          
+  // Create new serialport pointer
+  var reader = new com.SerialPort(portName , { 
+    baudRate: 115200,
+    dataBits: 8,
+    parity: 'none',
+    stopBits: 1,
+    flowControl: false,
+    buffersize: 1024
+  }, true); // this is the openImmediately flag [default is true]
+  
+  /* Workflow:
+    Reader gets 'open' event, runs:
+    * emit initialize event
+    * turns on the scan loop
+    * gets tag data, quits scan loop
+  */
+  
+  // EVENT LISTENERS
+  
+  reader.on('open',function() {
+    console.log('Port open');
+    
+    reader.on('initialize', initialize);
+    reader.on('initcodes', initcodes);
+    reader.on('scanloop', scanTagLoop);
+    reader.on('readtag', readTag);
+    reader.on('rfiddata', rfidData);
+    reader.on('readtagdata', readTagData);
+    
+    // unregister tag if removed
+    reader.on('tagremoved', function() {
+      console.log("Tag removed");
+      tagData = '';
+    });
+    
+    // register new tag and start readloop
+    reader.on('tagfound', function( tag ) {
+      if (tag != tagData) {                     // do nothing unless new tag is found
+        console.log("New tag found!");
+        tagData = tag;                          // register new tag
+        stopScan();                             // stop scanning for tags
+        readTag(tag);
+      } else {
+        console.log("same tag still...");
+      }
+    });
+  
+    reader.on('rfidresult', function(data) {
+      console.log("Jippi! "+data);
+    });
+    
+    reader.on('data', gotData);
+    
+    reader.emit('initialize', readerConfig.initialize['init']);
+    reader.emit('scanloop', readerConfig.protocols[tagType]);
   });
   
-  // register new tag and start readloop
-  reader.on('tagfound', function( tag ) {
-    if (tag != tagData) {                     // do nothing unless new tag is found
-      console.log("New tag found!");
-      tagData = tag;                          // register new tag
-      stopScan();                             // stop scanning for tags
-      //reader.removeAllListeners('scanloop'); 
-      // HERE!   
-      readTag(tag);
-    } else {
-      console.log("same tag still...");
-    }
-  });
-
-  reader.on('rfidresult', function(data) {
-    console.log("Jippi! "+data);
+  // error
+  reader.on('error', function( msg ) {
+    console.log("error: " + msg );
   });
   
-  reader.on('data', gotData);
+  // close
+  reader.on('close', function ( err ) {
+    console.log('port closed');
+  });
   
-  reader.emit('initialize', readerConfig.initialize['init']);
-  reader.emit('scanloop', readerConfig.protocols[tagType]);
-  //scanLoop;
-});
-
-// error
-reader.on('error', function( msg ) {
-  console.log("error: " + msg );
-});
-
-// close
-reader.on('close', function ( err ) {
-  console.log('port closed');
-});
-
-// END EVENT LISTENERS
-
-/*
-  FUNCTIONS
-*/
-
-// initialize reader and emit initcodes event
-var initialize = function(cmd, callback) {
-  reader.write(cmd, function(err) {
-    if (err){ callback(err)}
-    else {
-      console.log('initialized reader...')
-      // initialized? emit initcodes
-      reader.emit('initcodes', readerConfig.protocols[tagType]['initcodes']);
-    }
-  });
-}
-
-// run initcodes (before each tag loop)
-var initcodes = function(cmd, callback) {
-  reader.write(cmd['register_write_request'], function(err) {
-    if (err){ callback(err)}
-    else { 
-      reader.write(cmd['agc_enable'], function(err) {
-        if (err){ callback(err)}
-        else { 
-          reader.write(cmd['am_input'], function(err) {
-          if (err){ callback(err)}
-          else { 
-            console.log("ran initcodes!");
-            
-            }
-          });
-        }
-      });
-    }
-  });
-}
-
-// Hex string to ASCII
-var hex2a = function(hex) {
-  var str = '';
-  for (var i = 0; i < hex.length; i += 2)
-      str += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
-  return str;
-}
-
-var dec2hex = function(d) {
-  return ("0"+(Number(d).toString(16))).slice(-2).toUpperCase()
-}
-
-// TAG LOOP FUNCTIONS - do inventory check
-var scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[tagType]) }, 1000 );
+  // FUNCTIONS
   
-var scanTagLoop = function (protocol, callback){ 
-  // run inventory check in intervals
-  inventory(protocol['inventory'], function(err) {
-    if (err) { console.log(err) }
-  });
-}
-
-var stopScan = function() {
-  clearInterval(scanLoop);
-}
-
-// inventory command
-var inventory = function(cmd, callback) {
-  console.log("inventory cmd: "+cmd);
-  reader.write(cmd, function(err) {
-    if (err) { 
-      console.log("err: "+err);
-      callback(err)
-    }
-    else { 
-      console.log("ran inventory!") 
-    }
-  });
-}
-// END TAG LOOP FUNCTIONS
-
-// initialize read tag loop
-var readTag = function( tag, callback ) {
-  reader.emit('initcodes', readerConfig.protocols[tagType]['initcodes']);
-  //console.log("found tag id: " + tag );
-  readData = '';  // reset data
-  offset = start_offset;
-  console.log("sending readtagdata event, offset: "+offset );
-  reader.emit('readtagdata', offset);
-}
-
-// readtagdata
-// from rfidgeek:
-// def issue_command(protocol, cmd, cmd_length, options={})
-// read = issue_command(protocol, "18", "0C", :command_code => "23", :offset => "%02X" % offset, :bytes_per_read => "%02X" % bytes_per_read)
-// @command = "01" + cmd_length.to_s + "000304" + cmd.to_s + options[:flags] + options[:command_code] + options[:offset] + options[:bytes_per_read] + "0000"
-
-// read data loop
-var readTagData = function( offset, callback ) {
-  if(offset != length_to_read) {
-    cmd = ['01','0C','00','03','04','18','00','23', dec2hex(offset), dec2hex(bytes_per_read), '00', '00'].join('');
-    console.log("offset: "+offset+ " tagdata cmd: " + cmd );
+  // initialize reader and emit initcodes event
+  var initialize = function(cmd, callback) {
     reader.write(cmd, function(err) {
-      if(err) { throw new Error (err) }
-      offset += bytes_per_read ;
-      // do we need to delay read to next event loop?
-      process.nextTick(function() {
-        readTagData(offset);
-      });
+      if (err){ callback(err)}
+      else {
+        console.log('initialized reader...')
+        // initialized? emit initcodes
+        reader.emit('initcodes', readerConfig.protocols[tagType]['initcodes']);
+      }
     });
   }
-}
-
-// query command
-var query = function(cmd, callback) {
-  reader.write(cmd, function(err) {
-    if (err){ callback(err) }
-    else {
-      console.log("ran cmd: "+cmd+"...waiting for data");
-    }
-  });
-}
-
-// function rfidData, on rfiddata event
-var rfidData = function( data, callback) {
-  var str = hex2a(data);
-  console.log("rfiddata received: " + str );
-  // HERE! do a check on string content!
-  readData += str;
-  // rfid data consumed
-  if (readData.length >= 8 || str == 'W_OK') {
-    console.log("got full tag: "+readData);
-    reader.removeListener('readtag', readTag);    
-    reader.emit('rfidresult', readData);
-    // scanloop;
-    // reader.emit('scanloop', readerConfig.protocols[tagType]);
-    // start new scanloop
-    scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[tagType]) }, 1000 );
-  } else {
-    // continue reading
-    offset += bytes_per_read;
+  
+  // run initcodes (before each tag loop)
+  var initcodes = function(cmd, callback) {
+    reader.write(cmd['register_write_request'], function(err) {
+      if (err){ callback(err)}
+      else { 
+        reader.write(cmd['agc_enable'], function(err) {
+          if (err){ callback(err)}
+          else { 
+            reader.write(cmd['am_input'], function(err) {
+            if (err){ callback(err)}
+            else { 
+              console.log("ran initcodes!");
+              }
+            });
+          }
+        });
+      }
+    });
+  }
+  
+  // Hex string to ASCII
+  var hex2a = function(hex) {
+    var str = '';
+    for (var i = 0; i < hex.length; i += 2)
+        str += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+    return str;
+  }
+  
+  var dec2hex = function(d) {
+    return ("0"+(Number(d).toString(16))).slice(-2).toUpperCase()
+  }
+  
+  // TAG LOOP FUNCTIONS - do inventory check
+  var scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[tagType]) }, 1000 );
+    
+  var scanTagLoop = function (protocol, callback){ 
+    // run inventory check in intervals
+    inventory(protocol['inventory'], function(err) {
+      if (err) { console.log(err) }
+    });
+  }
+  
+  var stopScan = function() {
+    clearInterval(scanLoop);
+  }
+  
+  // inventory command
+  var inventory = function(cmd, callback) {
+    console.log("inventory cmd: "+cmd);
+    reader.write(cmd, function(err) {
+      if (err) { 
+        console.log("err: "+err);
+        callback(err)
+      }
+      else { 
+        console.log("ran inventory!") 
+      }
+    });
+  }
+  // END TAG LOOP FUNCTIONS
+  
+  // initialize read tag loop
+  var readTag = function( tag, callback ) {
+    reader.emit('initcodes', readerConfig.protocols[tagType]['initcodes']);
+    //console.log("found tag id: " + tag );
+    readData = '';  // reset data
+    offset = start_offset;
+    console.log("sending readtagdata event, offset: "+offset );
     reader.emit('readtagdata', offset);
   }
-}
-
-// on data event, do two checks:
-// fire 'tag' event if comma in result
-// fire rfiddata if data in square brackets
-var gotData = function( data ) {
-  console.log("received: "+data);
-  data = String(data)
-  if(!!data) {
-    // NO TAG
-    if (/,40]/.test(data)) {
-      console.log('no tag ...');
-      if (tagData) {                              // if tagData exist then tag is considered removed
-        reader.emit('tagremoved')
-      }
-    } 
-    // TAG
-    else if (/,..]/.test(data)) {                 // we have an inventory response! (comma and position)
-      var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
-      if (tag && tag[1]) {   
-        console.log('tag! '+tag[1]);
-        reader.emit('tagfound', tag[1]);
-      }
+  
+  // read data loop
+  var readTagData = function( offset, callback ) {
+    if(offset != length_to_read) {
+      cmd = ['01','0C','00','03','04','18','00','23', dec2hex(offset), dec2hex(bytes_per_read), '00', '00'].join('');
+      console.log("offset: "+offset+ " tagdata cmd: " + cmd );
+      reader.write(cmd, function(err) {
+        if(err) { throw new Error (err) }
+        offset += bytes_per_read ;
+        // do we need to delay read to next event loop?
+        process.nextTick(function() {
+          readTagData(offset);
+        });
+      });
     }
-    
-    // RFID DATA
-    else if (/\[.+\]/.test(data)) {                   // we have response data! (within brackets, no comma)
-      var rfiddata = data.match(/\[00(.+)\]/);        // strip initial 00 response
-      console.log("response data! "+rfiddata);
-      if (rfiddata) {
-        reader.emit('rfiddata', rfiddata[1]);
+  }
+  
+  // query command
+  var query = function(cmd, callback) {
+    reader.write(cmd, function(err) {
+      if (err){ callback(err) }
+      else {
+        console.log("ran cmd: "+cmd+"...waiting for data");
+      }
+    });
+  }
+  
+  // function rfidData, on rfiddata event
+  var rfidData = function( data, callback) {
+    var str = hex2a(data);
+    console.log("rfiddata received: " + str );
+    // HERE! do a check on string content!
+    readData += str;
+    // rfid data consumed
+    if (readData.length >= 8 || str == 'W_OK') {
+      console.log("got full tag: "+readData);
+      reader.removeListener('readtag', readTag);    
+      reader.emit('rfidresult', readData);
+      // scanloop;
+      // reader.emit('scanloop', readerConfig.protocols[tagType]);
+      // start new scanloop
+      scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[tagType]) }, 1000 );
+    } else {
+      // continue reading
+      offset += bytes_per_read;
+      reader.emit('readtagdata', offset);
+    }
+  }
+  
+  // data event
+  var gotData = function( data ) {
+    console.log("received: "+data);
+    data = String(data)
+    if(!!data) {
+      // NO TAG
+      if (/,40]/.test(data)) {
+        console.log('no tag ...');
+        if (tagData) {                              // if tagData exist then tag is considered removed
+          reader.emit('tagremoved')
+        }
+      } 
+      // TAG
+      else if (/,..]/.test(data)) {                 // we have an inventory response! (comma and position)
+        var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
+        if (tag && tag[1]) {   
+          console.log('tag! '+tag[1]);
+          reader.emit('tagfound', tag[1]);
+        }
+      }
+      
+      // RFID DATA
+      else if (/\[.+\]/.test(data)) {                   // we have response data! (within brackets, no comma)
+        var rfiddata = data.match(/\[00(.+)\]/);        // strip initial 00 response
+        console.log("response data! "+rfiddata);
+        if (rfiddata) {
+          reader.emit('rfiddata', rfiddata[1]);
+        }
       }
     }
   }
-}
+  
+  // for browser compatibility
+  if (typeof module !== 'undefined' && typeof module.exports !== 'undefined')
+    module.exports = rfidGeek;
+  else
+    window.rfidGeek = rfidGeek;
+})();
