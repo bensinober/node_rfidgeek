@@ -2,12 +2,14 @@ var rfidGeek = (function() {
   
   var com = require("serialport");
   //var ws = require("./websocket.js").client;
-  //ws.connect('ws://localhost:4567');
+  var wsServer = require("./wsserver.js").wsServer;
+  var wsClient = require("./wsclient.js").wsClient;
+  wsClient.connect('ws://localhost:4568');
   
   // VARIABLES
   var portName = "/dev/ttyUSB0";
   var tagType  = "iso15693"
-  var length_to_read = 6;  // total length to read - 1 
+  var length_to_read = 5;  // total length to read - 1 
   var bytes_per_read = 1;  // no bytes per read - 1
   var scanloop = null;     // scan loop handle
     
@@ -30,27 +32,7 @@ var rfidGeek = (function() {
     buffersize: 1024
   }, true); // this is the openImmediately flag [default is true]
   
-  // WEBSOCKET SERVER
-  // DON'T NEED SERVER FOR NOW
-  //var WebSocketServer = require('ws').Server
-  //var wss = new WebSocketServer({port: 4567});
-  //wss.on('connection', function(socket) {
-  //    socket.on('message', function(message) {
-  //        console.log('received: %s', message);
-  //    });
-  //    socket.send('something from server');
-  //});
-
-  // WEBSOCKET CLIENT
-  var WebSocket = require('ws');
-  var ws = new WebSocket('ws://localhost:4567/ws');
-  ws.on('open', function() {
-    //ws.send('something from client');
-  });
-  ws.on('message', function(message) {
-    console.log('nodejs: %s', message);
-  });
-
+ 
   /* Workflow:
     Reader gets 'open' event, runs:
     * emit initialize event
@@ -92,7 +74,7 @@ var rfidGeek = (function() {
   
     reader.on('rfidresult', function(data) {
       console.log("Jippi! got rfid: "+data);
-      ws.send(data);
+      socket.sendUTF(data);
     });
     
     reader.on('data', gotData);
