@@ -1,25 +1,28 @@
 var rfidGeek = (function() {
   
   var com = require("serialport");
-  //var ws = require("./websocket.js").client;
-  var wsServer = require("./wsserver.js").wsServer;
-  var wsClient = require("./wsclient.js").wsClient;
-  wsClient.connect('ws://localhost:4568');
+  //var util = require("util");
+  var wss = require("./wsserver.js");   // websocket server - pushes to connected clients
+  var ws = require("./wsclient.js");    // websocket client - sends rfid result to server
+  ws.connect('ws://localhost:4568/ws');
   
+  // grab websocket handle when ready
+  ws.on('ready', function(connection) {
+    socket = connection;
+  });
   // VARIABLES
   var portName = "/dev/ttyUSB0";
   var tagType  = "iso15693"
-  var length_to_read = 5;  // total length to read - 1 
+  var length_to_read = 8;  // total length to read - 1 
   var bytes_per_read = 1;  // no bytes per read - 1
-  var scanloop = null;     // scan loop handle
-    
+  
   // read reader config file
   var readerConfig = require('./univelop_500b.json');
   
   // data variables
-  var tagData = '';   // this stores the tag data
+  var tagData = ''; // this stores the tag data
   var readData = '';  // this stores the read buffer
-  var start_offset = 1;
+  var start_offset = 0;
   var offset = start_offset;
           
   // Create new serialport pointer
@@ -47,7 +50,7 @@ var rfidGeek = (function() {
     
     reader.on('initialize', initialize);
     reader.on('initcodes', initcodes);
-    reader.on('scanloop', startScanLoop);
+    reader.on('scanloop', scanTagLoop);
     reader.on('readtag', readTag);
     reader.on('rfiddata', rfidData);
     reader.on('readtagdata', readTagData);
@@ -55,7 +58,7 @@ var rfidGeek = (function() {
     // unregister tag if removed
     reader.on('tagremoved', function() {
       console.log("Tag removed");
-      //ws.send("Tag removed");
+      //socket.sendUTF("Tag removed");
       tagData = '';
     });
     
@@ -63,9 +66,9 @@ var rfidGeek = (function() {
     reader.on('tagfound', function( tag ) {
       if (tag != tagData) {                     // do nothing unless new tag is found
         console.log("New tag found!");
-        //ws.send("Tag found"+tag);
+        //socket.sendUTF(tag);
         tagData = tag;                          // register new tag
-        stopScanLoop();                         // stop scanning for tags
+        stopScan();                             // stop scanning for tags
         readTag(tag);
       } else {
         console.log("same tag still...");
@@ -73,14 +76,14 @@ var rfidGeek = (function() {
     });
   
     reader.on('rfidresult', function(data) {
-      console.log("Jippi! got rfid: "+data);
-      socket.sendUTF(data);
+      console.log("Jippi! "+data);
+      socket.sendUTF(data.substring(1)); // skip first byte
     });
     
     reader.on('data', gotData);
     
     reader.emit('initialize', readerConfig.initialize['init']);
-    reader.emit('scanloop');
+    reader.emit('scanloop', readerConfig.protocols[tagType]);
   });
   
   // error
@@ -140,21 +143,17 @@ var rfidGeek = (function() {
   }
   
   // TAG LOOP FUNCTIONS - do inventory check
-  var startScanLoop = function() {
-    scanloop = setInterval(function() { 
-      scanTagLoop(readerConfig.protocols[tagType]);
-    }, 1000 );
-  }
-  
-  var stopScanLoop = function() {
-    clearInterval(scanloop);
-  }
-  
+  var scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[tagType]) }, 1000 );
+    
   var scanTagLoop = function (protocol, callback){ 
     // run inventory check in intervals
     inventory(protocol['inventory'], function(err) {
       if (err) { console.log(err) }
     });
+  }
+  
+  var stopScan = function() {
+    clearInterval(scanLoop);
   }
   
   // inventory command
@@ -189,8 +188,8 @@ var rfidGeek = (function() {
       console.log("offset: "+offset+ " tagdata cmd: " + cmd );
       reader.write(cmd, function(err) {
         if(err) { throw new Error (err) }
-        offset += bytes_per_read ;
-        // delay next read to next event loop for stability
+        offset += bytes_per_read +1; // need to shift offset by 1
+        // do we need to delay read to next event loop?
         process.nextTick(function() {
           readTagData(offset);
         });
@@ -215,15 +214,17 @@ var rfidGeek = (function() {
     // HERE! do a check on string content!
     readData += str;
     // rfid data consumed
-    if (readData.length >= 8 || str == 'W_OK') {
+    if (readData.length >= length_to_read || /575F4F4B/.test(str)) {
       console.log("got full tag: "+readData);
       reader.removeListener('readtag', readTag);    
-      reader.emit('rfidresult', readData.substr(1) );   // remove first character from string
+      reader.emit('rfidresult', readData);
+      // scanloop;
+      // reader.emit('scanloop', readerConfig.protocols[tagType]);
       // start new scanloop
-      startScanLoop();
+      scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[tagType]) }, 1000 );
     } else {
       // continue reading
-      offset += bytes_per_read;
+      offset += bytes_per_read + 1; // need to shift offset with 1
       reader.emit('readtagdata', offset);
     }
   }

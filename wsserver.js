@@ -61,4 +61,4 @@ wsServer.on('request', function(request) {
   });
 });
 
-module.exports.wsServer = wsServer;
+module.exports = wsServer;
