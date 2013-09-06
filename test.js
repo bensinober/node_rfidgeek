@@ -12,6 +12,7 @@ var rfid = new Rfidgeek({
   websocket: true
 });
 
+// create event listeners
 rfid.on('tagfound', function(tag) {
   console.log("Tag received in external app: "+tag);
 });
@@ -20,4 +21,5 @@ rfid.on('rfiddata', function(data) {
   console.log("RFID data received in external app: "+data);
 });
 
+// start scan loop
 rfid.scan();

@@ -1,5 +1,15 @@
 # Simple rfidgeek adaptor to Node.js
-(See test.js for example on use)
+This adaptor is primarily made for the Univelop 500 RFID reader/writer made by Texas Instruments.
+This reader supports the following tags:
+
+* iso15693
+* 14443A
+* 14443B
+* Tag-It
+
+But only iso15693 is supported for now.
+
+(See `test.js` for example on use)
 
 ## Using
 
@@ -21,6 +31,8 @@ var rfid = new Rfidgeek({
 });
 
 ```
+
+For now uses the `tagfound` and `rfiddata` events.
 
 For more options check the `rfid.js` file
 
