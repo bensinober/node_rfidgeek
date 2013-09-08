@@ -2,7 +2,7 @@
   "name": "rfidgeek",
   "description": "serial connector to univelop RFID reader",
   "author": "Benjamin Rokseth <bensinober@gmail.com>",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "repository": {
     "type": "git",
     "url": "https://github.com/bensinober/node_rfidgeek.git"
