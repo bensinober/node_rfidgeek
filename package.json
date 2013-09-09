@@ -12,6 +12,10 @@
     "serialport": ">= 1.1.3",
     "websocket": ">= 1.0.8"
   },
+  "devDependencies": {
+    "mocha": "*",
+    "expect.js": "*"
+  },
   "license": "MIT",
   "keywords": [
     "rfid",
