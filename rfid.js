@@ -28,12 +28,12 @@ sys.inherits(Rfidgeek, events.EventEmitter);
  * exported scan function
  */
  
-Rfidgeek.prototype.scan = function() {
+Rfidgeek.prototype.init = function() {
   var self = this;
 
-  if(self.websocket) {  //websocket takes only port as argument
+  if(self.websocket) {                    // websocket boolean
     var wss = require("./wsserver.js");   // websocket server - pushes to connected clients
-    var ws = require("./wsclient.js");      // websocket client - sends rfid result to server
+    var ws = require("./wsclient.js");    // websocket client - sends rfid result to server
     ws.connect('ws://localhost:8080/ws');
   
     // grab websocket handle when ready
@@ -77,7 +77,7 @@ Rfidgeek.prototype.scan = function() {
     
     reader.on('initialize', initialize);
     reader.on('initcodes', initcodes);
-    reader.on('scanloop', scanTagLoop);
+    reader.on('scanloop', self.scanTagLoop);
     reader.on('readtag', readTag);
     reader.on('rfiddata', rfidData);
     reader.on('readtagdata', readTagData);
@@ -85,19 +85,26 @@ Rfidgeek.prototype.scan = function() {
     // unregister tag if removed
     reader.on('tagremoved', function() {
       console.log("Tag removed");
-      //socket.sendUTF("Tag removed");
+      if (self.websocket) {
+        socket.sendUTF("Tag removed");
+      }
       tagData = '';
     });
     
-    // register new tag and start readloop
+    // register new tag and 
+    // start readloop if iso15693 tag, else ignore
     reader.on('tagfound', function( tag ) {
       if (tag != tagData) {                     // do nothing unless new tag is found
         console.log("New tag found!");
-        //socket.sendUTF(tag);
-        self.emit('tagfound', tag);
+        if (self.websocket) {
+          socket.sendUTF(tag);
+        }
+        self.emit('tagfound', tag);             // emit to calling external app!
         tagData = tag;                          // register new tag
-        stopScan();                             // stop scanning for tags
-        readTag(tag);
+        if (self.tagtype == 'iso15693') {       // if iso15693 tag:
+          stopScan();                           // stop scanning for tags
+          readTag(tag);                         // start read loop
+        }
       } else {
         console.log("same tag still...");
       }
@@ -105,7 +112,9 @@ Rfidgeek.prototype.scan = function() {
   
     reader.on('rfidresult', function(data) {
       //console.log("Jippi! "+data);
-      //socket.sendUTF(data.substring(1));         // skip first byte
+      if (self.websocket) {
+        socket.sendUTF(data.substring(1));       // send to websockets, skip first byte
+      }
       self.emit('rfiddata', data.substring(1));  // emit to external app
     });
     
@@ -172,11 +181,11 @@ Rfidgeek.prototype.scan = function() {
   }
   
   // TAG LOOP FUNCTIONS - do inventory check
-  var scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[self.tagtype]) }, 1000 );
+  //var scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[self.tagtype]) }, 1000 );
     
-  var scanTagLoop = function (protocol, callback){ 
+  this.scanTagLoop = function (callback){ 
     // run inventory check in intervals
-    inventory(protocol['inventory'], function(err) {
+    inventory(readerConfig.protocols[self.tagtype]['inventory'], function(err) {
       if (err) { console.log(err) }
     });
   }
@@ -230,17 +239,15 @@ Rfidgeek.prototype.scan = function() {
   var rfidData = function( data, callback) {
     var str = hex2a(data);
     //console.log("rfiddata received: " + str );
-    // HERE! do a check on string content!
     readData += str;
     // rfid data consumed
     if (readData.length >= self.length_to_read || /575F4F4B/.test(str)) {
       //console.log("got full tag: "+readData);
       reader.removeListener('readtag', readTag);    
       reader.emit('rfidresult', readData);
-      // scanloop;
-      // reader.emit('scanloop', readerConfig.protocols[tagType]);
+      // reader.emit('scanloop', readerConfig.protocols[self.tagType]);
       // start new scanloop
-      scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[self.tagtype]) }, 1000 );
+      scanLoop = setInterval(function() { self.scanTagLoop(readerConfig.protocols[self.tagtype]) }, 1000 );
     } else {
       // continue reading
       offset += self.bytes_per_read + 1; // need to shift offset with 1
@@ -280,6 +287,16 @@ Rfidgeek.prototype.scan = function() {
     }
   }
 }
+
+Rfidgeek.prototype.start = function() {
+  var self = this;
+  scanLoop = setInterval(function() { self.scanTagLoop() }, 1000 );
+}
+
+Rfidgeek.prototype.stop = function() {
+  clearInterval(scanLoop);
+}
+
 module.exports = Rfidgeek  
   // for browser compatibility
   //if (typeof module !== 'undefined' && typeof module.exports !== 'undefined')
