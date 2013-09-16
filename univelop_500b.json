@@ -3,7 +3,7 @@
     "init": "0108000304FF0000"
   }, 
   "protocols": {
-    "iso15693": {
+    "ISO15693": {
       "initcodes": {
         "register_write_request": "010C00030410002101000000", 
         "agc_enable": "0109000304F0000000", 
@@ -19,15 +19,15 @@
       }, 
       "inventory": "010B000304340050000000"
     }, 
-    "14443A": {
+    "ISO14443A": {
       "initcodes": {
         "register_write_request": "010C00030410002101090000", 
         "agc_enable": "0109000304F0000000", 
         "am_input": "0109000304F1FF0000"
       }, 
-      "inventory": "0108000304A00000"
+      "inventory": "0109000304A0010000"
     }, 
-    "14443B": {
+    "ISO14443B": {
       "initcodes": {
         "register_write_request": "010C000304100021010C0000", 
         "agc_enable": "0109000304F0000000", 
