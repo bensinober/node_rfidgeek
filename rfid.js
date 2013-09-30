@@ -9,24 +9,29 @@ var sys = require('sys'),
 function Rfidgeek(options) {
   // default options
   options = options || {};
-  this.websocket      = options.websocket;
-  this.portname       = options.portname  || '/dev/ttyUSB0';
-  this.tagtype        = options.tagtype   || 'ISO15693';
-  this.scaninterval   = options.scaninterval   || 1000;
-  this.readerconfig   = options.readerconfig   || './univelop_500b.json';
-  this.length_to_read = options.length_to_read || 8;
-  this.bytes_per_read = options.bytes_per_read || 1;
-  
+  this.websocket      = options.websocket ;
+  this.portname       = options.portname  || '/dev/ttyUSB0' ;
+  this.tagtype        = options.tagtype   || 'ISO15693' ;
+  this.scaninterval   = options.scaninterval   || 1000 ;
+  this.readerconfig   = options.readerconfig   || './univelop_500b.json' ;
+  this.length_to_read = options.length_to_read || 8 ;
+  this.bytes_per_read = options.bytes_per_read || 1 ;
+
+  logger = require('./logger');
+  logger.debugLevel = options.debug || 'none' ;
+
   if(false === (this instanceof Rfidgeek)) {
       return new Rfidgeek(options);
   }
   
   events.EventEmitter.call(this);
 }
+
+// Make Rfidgeek inherit EventEmitter - ability to create custom events on the fly 
 sys.inherits(Rfidgeek, events.EventEmitter);
 
 /*
- * exported scan function
+ * exported init function
  */
  
 Rfidgeek.prototype.init = function() {
@@ -74,7 +79,7 @@ Rfidgeek.prototype.init = function() {
   // EVENT LISTENERS
   
   reader.on('open',function() {
-    console.log('Port open');
+    logger.log('info', 'Port open');
     
     reader.on('initialize', initialize);
     reader.on('initcodes', initcodes);
@@ -85,7 +90,7 @@ Rfidgeek.prototype.init = function() {
     
     // unregister tag if removed
     reader.on('tagremoved', function() {
-      console.log("Tag removed");
+      logger.log('info', 'Tag removed');
       if (self.websocket) {
         socket.sendUTF("Tag removed");
       }
@@ -96,7 +101,7 @@ Rfidgeek.prototype.init = function() {
     // start readloop if ISO15693 tag, else ignore
     reader.on('tagfound', function( tag ) {
       if (tag != tagData) {                     // do nothing unless new tag is found
-        console.log("New tag found!");
+        logger.log('info', "New tag found!");
         if (self.websocket) {
           socket.sendUTF(tag);
         }
@@ -107,12 +112,12 @@ Rfidgeek.prototype.init = function() {
           readTag(tag);                         // start read loop
         }
       } else {
-        console.log("same tag still...");
+        logger.log('info', "same tag still...");
       }
     });
   
     reader.on('rfidresult', function(data) {
-      //console.log("Jippi! "+data);
+      logger.log('info', "Full tag received: "+data);
       if (self.websocket) {
         socket.sendUTF(data.substring(1));       // send to websockets, skip first byte
       }
@@ -127,12 +132,12 @@ Rfidgeek.prototype.init = function() {
   
   // error
   reader.on('error', function( msg ) {
-    console.log("error: " + msg );
+    logger.log('error', msg );
   });
   
   // close
   reader.on('close', function ( err ) {
-    console.log('port closed');
+    logger.log('info', 'port closed');
   });
   
   // FUNCTIONS
@@ -142,7 +147,7 @@ Rfidgeek.prototype.init = function() {
     reader.write(cmd, function(err) {
       if (err){ callback(err)}
       else {
-        console.log('initialized reader...')
+        logger.log('info', 'initialized reader...')
         // initialized? emit initcodes
         reader.emit('initcodes', readerConfig.protocols[self.tagtype]['initcodes']);
       }
@@ -160,7 +165,7 @@ Rfidgeek.prototype.init = function() {
             reader.write(cmd['am_input'], function(err,cb) {
             if (err){ callback(err,cb)}
             else { 
-              console.log("ran initcodes!");
+              logger.log('info', "ran initcodes!");
               }
             });
           }
@@ -184,10 +189,10 @@ Rfidgeek.prototype.init = function() {
   // TAG LOOP FUNCTIONS - do inventory check
   //var scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[self.tagtype]) }, 1000 );
     
-  this.scanTagLoop = function (callback){ 
+  this.scanTagLoop = function (){ 
     // run inventory check in intervals
     inventory(readerConfig.protocols[self.tagtype]['inventory'], function(err) {
-      if (err) { console.log(err) }
+      if (err) { logger.log('error', err) }
     });
   }
   
@@ -197,14 +202,13 @@ Rfidgeek.prototype.init = function() {
   
   // inventory command
   var inventory = function(cmd, callback) {
-    //console.log("inventory cmd: "+cmd);
     reader.write(cmd, function(err) {
       if (err) { 
-        console.log("err: "+err);
+        logger.log('error', err);
         callback(err)
       }
       else { 
-        console.log("ran inventory!") 
+        logger.log('info', 'ran inventory!') 
       }
     });
   }
@@ -213,10 +217,10 @@ Rfidgeek.prototype.init = function() {
   // initialize read tag loop
   var readTag = function( tag, callback ) {
     reader.emit('initcodes', readerConfig.protocols[self.tagtype]['initcodes']);
-    //console.log("found tag id: " + tag );
+    logger.log('debug', "found tag id: " + tag );
     readData = '';  // reset data
     offset = start_offset;
-    //console.log("sending readtagdata event, offset: "+offset );
+    logger.log('debug', "sending readtagdata event, offset: "+offset );
     reader.emit('readtagdata', offset);
   }
   
@@ -224,7 +228,7 @@ Rfidgeek.prototype.init = function() {
   var readTagData = function( offset, callback ) {
     if(offset != self.length_to_read) {
       cmd = ['01','0C','00','03','04','18','00','23', dec2hex(offset), dec2hex(self.bytes_per_read), '00', '00'].join('');
-      //console.log("offset: "+offset+ " tagdata cmd: " + cmd );
+      logger.log('debug', "offset: "+offset+ " tagdata cmd: " + cmd );
       reader.write(cmd, function(err) {
         if(err) { throw new Error (err) }
         offset += self.bytes_per_read +1; // need to shift offset by 1
@@ -239,11 +243,10 @@ Rfidgeek.prototype.init = function() {
   // function rfidData, on rfiddata event
   var rfidData = function( data, callback) {
     var str = hex2a(data);
-    //console.log("rfiddata received: " + str );
+    logger.log('debug', "rfiddata received: " + str );
     readData += str;
     // rfid data consumed
     if (readData.length >= self.length_to_read || /575F4F4B/.test(str)) {
-      //console.log("got full tag: "+readData);
       reader.removeListener('readtag', readTag);    
       reader.emit('rfidresult', readData);
       // reader.emit('scanloop', readerConfig.protocols[self.tagType]);
@@ -258,14 +261,14 @@ Rfidgeek.prototype.init = function() {
   
   // data event
   var gotData = function( data ) {
-    console.log("received: "+data);
+    logger.log('received: ', data);
     data = String(data)
     if(!!data) {
       // ISO15693 needs special treatment
       if(self.tagtype == 'ISO15693') {
         // ISO15693 NO TAG
         if (/,40]/.test(data)) {
-          console.log('no tag ...');
+          logger.log('debug', 'no tag ...');
           if (tagData) {                              // if tagData exist then tag is considered removed
             reader.emit('tagremoved')
           }
@@ -274,7 +277,6 @@ Rfidgeek.prototype.init = function() {
         else if (/,..]/.test(data)) {                 // we have an inventory response! (comma and position)
           var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
           if (tag && tag[1]) {   
-            //console.log('tag! '+tag[1]);
             reader.emit('tagfound', tag[1]);
           }
         }
@@ -282,7 +284,7 @@ Rfidgeek.prototype.init = function() {
         // ISO15693 RFID DATA
         else if (/\[.+\]/.test(data)) {                // we have response data! (within brackets, no comma)
           var rfiddata = data.match(/\[00(.+)\]/);     // strip initial 00 response
-          //console.log("response data! "+rfiddata);
+          logger.log('debug', "response data! "+rfiddata);
           if (rfiddata) {
             reader.emit('rfiddata', rfiddata[1]);
           }
@@ -291,7 +293,7 @@ Rfidgeek.prototype.init = function() {
       } 
       else if (/\[.+\]/.test(data)) {
         var tag = data.match(/\[(.+)\]/);            // tag is anything between brackets
-        console.log("tag! "+tag);
+        logger.log('debug', "tag! "+tag);
         if (tag && tag[1]) {
           reader.emit('tagfound', tag[1]);
         }

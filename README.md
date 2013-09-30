@@ -46,6 +46,7 @@ For now uses the `tagfound` and `rfiddata` events.
 The full range of options (including defaults in parantheses) are:
 
 ```
+debug:     ('none')                      // show debug information
 websocket: (false)                       // activate websocket server at port 8080
 portname:  ('/dev/ttyUSB0')              // device path to reader
 tagtype:   ('ISO15693')                  // type rfid ['ISO15693', 'ISO14443A', 'ISO14443B', 'TAGIT']
