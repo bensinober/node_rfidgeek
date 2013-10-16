@@ -8,8 +8,10 @@ var Rfidgeek = require('./rfid.js');
 var rfid = new Rfidgeek();
 
 // instantiating a reader with websocket server
-var rfid = new Rfidgeek({ 
-  websocket: true
+var rfid = new Rfidgeek({
+  debug: 'debug',
+  websocket: true,
+  tagtype: 'TAGIT'
 });
 
 // create event listeners
@@ -21,5 +23,8 @@ rfid.on('rfiddata', function(data) {
   console.log("RFID data received in external app: "+data);
 });
 
+// init reader
+rfid.init();
+
 // start scan loop
-rfid.scan();
+rfid.start();

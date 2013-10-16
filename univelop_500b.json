@@ -11,7 +11,7 @@
       }, 
       "inventory": "010B000304142401000000"
     }, 
-    "tagit": {
+    "TAGIT": {
       "initcodes": {
         "register_write_request": "010C00030410002101130000", 
         "agc_enable": "0109000304F0000000", 

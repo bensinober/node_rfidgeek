@@ -261,7 +261,7 @@ Rfidgeek.prototype.init = function() {
   
   // data event
   var gotData = function( data ) {
-    logger.log('received: ', data);
+    logger.log('debug', 'received: '+data);
     data = String(data)
     if(!!data) {
       // ISO15693 needs special treatment
