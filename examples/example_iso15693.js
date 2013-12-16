@@ -1,8 +1,9 @@
 /*
- * Simple example on using Rfidgeek module events
+ * Simple example on using Rfidgeek module events for grabbing ISO15693 tags
+ *  starts a Websocket server at port 8080 that can be connected for testing
  */
 
-var Rfidgeek = require('./rfid.js');
+var Rfidgeek = require('../rfid.js');
 
 // instantiating a simple reader
 var rfid = new Rfidgeek();
@@ -11,7 +12,9 @@ var rfid = new Rfidgeek();
 var rfid = new Rfidgeek({
   debug: 'debug',
   websocket: true,
-  tagtype: 'TAGIT'
+  tagtype: 'ISO15693',
+  bytes_to_read: 1,
+  length_to_read: 26
 });
 
 // create event listeners

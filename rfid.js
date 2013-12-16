@@ -79,7 +79,7 @@ Rfidgeek.prototype.init = function() {
   // EVENT LISTENERS
   
   reader.on('open',function() {
-    logger.log('info', 'Port open');
+    logger.log('debug', 'Port open');
     
     reader.on('initialize', initialize);
     reader.on('initcodes', initcodes);
@@ -90,7 +90,7 @@ Rfidgeek.prototype.init = function() {
     
     // unregister tag if removed
     reader.on('tagremoved', function() {
-      logger.log('info', 'Tag removed');
+      logger.log('debug', 'Tag removed');
       if (self.websocket) {
         socket.sendUTF("Tag removed");
       }
@@ -101,7 +101,7 @@ Rfidgeek.prototype.init = function() {
     // start readloop if ISO15693 tag, else ignore
     reader.on('tagfound', function( tag ) {
       if (tag != tagData) {                     // do nothing unless new tag is found
-        logger.log('info', "New tag found!");
+        logger.log('debug', "New tag found!");
         if (self.websocket) {
           socket.sendUTF(tag);
         }
@@ -112,12 +112,12 @@ Rfidgeek.prototype.init = function() {
           readTag(tag);                         // start read loop
         }
       } else {
-        logger.log('info', "same tag still...");
+        logger.log('debug', "same tag still...");
       }
     });
   
     reader.on('rfidresult', function(data) {
-      logger.log('info', "Full tag received: "+data);
+      logger.log('debug', "Full tag received: "+data);
       if (self.websocket) {
         socket.sendUTF(data.substring(1));       // send to websockets, skip first byte
       }
@@ -137,7 +137,7 @@ Rfidgeek.prototype.init = function() {
   
   // close
   reader.on('close', function ( err ) {
-    logger.log('info', 'port closed');
+    logger.log('debug', 'port closed');
   });
   
   // FUNCTIONS
@@ -147,7 +147,7 @@ Rfidgeek.prototype.init = function() {
     reader.write(cmd, function(err) {
       if (err){ callback(err)}
       else {
-        logger.log('info', 'initialized reader...')
+        logger.log('debug', 'initialized reader...')
         // initialized? emit initcodes
         reader.emit('initcodes', readerConfig.protocols[self.tagtype]['initcodes']);
       }
@@ -165,7 +165,7 @@ Rfidgeek.prototype.init = function() {
             reader.write(cmd['am_input'], function(err,cb) {
             if (err){ callback(err,cb)}
             else { 
-              logger.log('info', "ran initcodes!");
+              logger.log('debug', "ran initcodes!");
               }
             });
           }
@@ -208,7 +208,7 @@ Rfidgeek.prototype.init = function() {
         callback(err)
       }
       else { 
-        logger.log('info', 'ran inventory!') 
+        logger.log('debug', 'ran inventory!') 
       }
     });
   }
@@ -216,7 +216,7 @@ Rfidgeek.prototype.init = function() {
   
   // initialize read tag loop
   var readTag = function( tag, callback ) {
-    reader.emit('initcodes', readerConfig.protocols[self.tagtype]['initcodes']);
+    // reader.emit('initcodes', readerConfig.protocols[self.tagtype]['initcodes']);
     logger.log('debug', "found tag id: " + tag );
     readData = '';  // reset data
     offset = start_offset;
@@ -277,6 +277,7 @@ Rfidgeek.prototype.init = function() {
         else if (/,..]/.test(data)) {                 // we have an inventory response! (comma and position)
           var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
           if (tag && tag[1]) {   
+            logger.log("debug", "tag ID: "+tag[1]);
             reader.emit('tagfound', tag[1]);
           }
         }
@@ -284,8 +285,8 @@ Rfidgeek.prototype.init = function() {
         // ISO15693 RFID DATA
         else if (/\[.+\]/.test(data)) {                // we have response data! (within brackets, no comma)
           var rfiddata = data.match(/\[00(.+)\]/);     // strip initial 00 response
-          logger.log('debug', "response data! "+rfiddata);
           if (rfiddata) {
+            logger.log('debug', "response data! "+rfiddata[1]);
             reader.emit('rfiddata', rfiddata[1]);
           }
         } 
@@ -293,7 +294,7 @@ Rfidgeek.prototype.init = function() {
       } 
       else if (/\[.+\]/.test(data)) {
         var tag = data.match(/\[(.+)\]/);            // tag is anything between brackets
-        logger.log('debug', "tag! "+tag);
+        logger.log('debug', "tag ID: "+tag);
         if (tag && tag[1]) {
           reader.emit('tagfound', tag[1]);
         }
