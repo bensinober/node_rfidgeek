@@ -108,8 +108,8 @@ Rfidgeek.prototype.init = function() {
         self.emit('tagfound', tag);             // emit to calling external app!
         tagData = tag;                          // register new tag
         if (self.tagtype == 'ISO15693') {       // if ISO15693 tag:
-          stopScan();                           // stop scanning for tags
-          readTag(tag);                         // start read loop
+          stopScan();                           //   stop scanning for tags
+          readTag(tag);                         //   start read loop
         }
       } else {
         logger.log('debug', "same tag still...");
@@ -119,9 +119,9 @@ Rfidgeek.prototype.init = function() {
     reader.on('rfidresult', function(data) {
       logger.log('debug', "Full tag received: "+data);
       if (self.websocket) {
-        socket.sendUTF(data.substring(1));       // send to websockets, skip first byte
+        socket.sendUTF(data);       // send to websockets, skip first byte
       }
-      self.emit('rfiddata', data.substring(1));  // emit to external app
+      self.emit('rfiddata', data);  // emit to external app
     });
     
     reader.on('data', gotData);
@@ -174,14 +174,25 @@ Rfidgeek.prototype.init = function() {
     });
   }
   
-  // Hex string to ASCII
-  var hex2a = function(hex) {
+  // this function reverses a hex string to return tag ID
+  var reverseTag = function(hex) {
+    var str = [];
+    for (var i = 0; i < hex.length; i += 2) {
+      str.push(hex.substr(i, 2));
+    }
+    return str.reverse().join('');
+  }
+
+  // this function turns a hex string to ASCII
+  var hex2ascii = function(hex) {
     var str = '';
-    for (var i = 0; i < hex.length; i += 2)
-        str += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+    for (var i = 0; i < hex.length; i += 2) {
+      str += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+    }
     return str;
   }
   
+  // this function turns a decimal number to hex
   var dec2hex = function(d) {
     return ("0"+(Number(d).toString(16))).slice(-2).toUpperCase()
   }
@@ -224,7 +235,7 @@ Rfidgeek.prototype.init = function() {
     reader.emit('readtagdata', offset);
   }
   
-  // read data loop
+  // loop to read data from ISO15693 
   var readTagData = function( offset, callback ) {
     if(offset != self.length_to_read) {
       cmd = ['01','0C','00','03','04','18','00','23', dec2hex(offset), dec2hex(self.bytes_per_read), '00', '00'].join('');
@@ -240,9 +251,10 @@ Rfidgeek.prototype.init = function() {
     }
   }
   
-  // function rfidData, on rfiddata event
+  // function rfidData, run on rfiddata event
   var rfidData = function( data, callback) {
-    var str = hex2a(data);
+    var str = hex2ascii(data);
+    //var str = data;
     logger.log('debug', "rfiddata received: " + str );
     readData += str;
     // rfid data consumed
@@ -276,9 +288,10 @@ Rfidgeek.prototype.init = function() {
         // ISO15693 TAG
         else if (/,..]/.test(data)) {                 // we have an inventory response! (comma and position)
           var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
-          if (tag && tag[1]) {   
-            logger.log("debug", "tag ID: "+tag[1]);
-            reader.emit('tagfound', tag[1]);
+          if (tag && tag[1]) {
+            id = reverseTag(tag[1]);
+            logger.log("debug", "tag ID: "+id );
+            reader.emit('tagfound', id);
           }
         }
         
@@ -294,9 +307,10 @@ Rfidgeek.prototype.init = function() {
       } 
       else if (/\[.+\]/.test(data)) {
         var tag = data.match(/\[(.+)\]/);            // tag is anything between brackets
-        logger.log('debug', "tag ID: "+tag);
         if (tag && tag[1]) {
-          reader.emit('tagfound', tag[1]);
+          id = reverseTag(tag[1]);
+          logger.log('debug', "tag ID: "+id);
+          reader.emit('tagfound', id);
         }
       } 
     }
