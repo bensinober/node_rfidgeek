@@ -12,27 +12,15 @@
  *  24-30 : library code
  */
 
-// convert hex string to ascii
-var hex2ascii = function(hex) {
-  var str = '';
-  for (var i = 0; i < hex.length; i += 2) {
-    str += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
-  }
-  return str;
-}
-
 var Rfidgeek = require('../rfid.js');
-
-// instantiating a simple reader
-var rfid = new Rfidgeek();
 
 // instantiating a reader with websocket server
 var rfid = new Rfidgeek({
-  debug: 'debug',
-  websocket: true,
+  debug: 'error',
+  websocket: false,
   tagtype: 'ISO15693',
   bytes_to_read: 1,
-  length_to_read: 26  // 26 bytes
+  length_to_read: 26  // 26 blocks (=52 bytes) to grab entire content
 });
 
 // create event listeners
@@ -41,10 +29,9 @@ rfid.on('tagfound', function(tag) {
 });
 
 rfid.on('rfiddata', function(data) {
-  console.log("RFID data received in external app: "+data);
    json = {
-      itemno: parseInt(data.substring(1,2),8),
-      totalitems: parseInt(data.substring(2,3),8),
+      itemno: data.substring(1,2).charCodeAt(0),
+      totalitems: data.substring(2,3).charCodeAt(0),
       barcode: data.substring(5,19),
       md5sum: data.substring(19,21),
       country: data.substring(21,23),
