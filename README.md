@@ -1,5 +1,7 @@
 # Simple rfidgeek adaptor to Node.js
+
 This adaptor is primarily made for the Univelop 500 RFID reader/writer made by Texas Instruments.
+
 This reader supports the following tags:
 
 * ISO15693
@@ -19,26 +21,25 @@ var rfid = new Rfidgeek();
 
 To initialize reader:
 
-```rfid.init();```
+    rfid.init();
 
 Then to activate the scan loop:
 
-```rfid.start();```
+    rfid.start();
 
 And to deactivate:
 
-```rfid.stop();```
+    rfid.stop();
 
 
-Alternatively, the controller can be passed to an included websocket server, which 
-in turn broadcasts to any websocket client connected at port 8080. 
+Alternatively, the controller can be passed to an included websocket server, which in turn broadcasts to any websocket client connected at port 8080. 
+
 
 ```
 var Rfidgeek = require('rfidgeek'); 
 var rfid = new Rfidgeek({
   websocket: true
 });
-
 ```
 
 For now uses the `tagfound` and `rfiddata` events.
@@ -57,6 +58,7 @@ bytes_per_read:  (1)                     // chunk length to read from ISO15693
 ```
 
 For more options check the `rfid.js` file
+
 Note, there is work on the reader in Python:
 
     https://github.com/scriptotek/pyrfidgeek
