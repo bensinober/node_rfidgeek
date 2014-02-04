@@ -1,6 +1,6 @@
 var sys = require('sys'),
     events = require('events'),
-    com = require("serialport");
+    com = require('serialport');
 
 /*
  * Constructor
@@ -10,6 +10,7 @@ function Rfidgeek(options) {
   // default options
   options = options || {};
   this.websocket      = options.websocket ;
+  this.tcpsocket      = options.tcpsocket ;
   this.portname       = options.portname  || '/dev/ttyUSB0' ;
   this.tagtype        = options.tagtype   || 'ISO15693' ;
   this.scaninterval   = options.scaninterval   || 1000 ;
@@ -43,17 +44,68 @@ Rfidgeek.prototype.init = function() {
     ws.connect('ws://localhost:8080/ws');
   
     // grab websocket handle when ready
-    ws.on('ready', function(connection) {
-      socket = connection;
+    ws.on('ready', function(conn) {
+      socket = conn;
     });
   }
+
+/*
+ * TCP Socket communication
+ */
+
+  if(self.tcpsocket) {
+    var tcpclient = require("./tcpclient.js");
+    tcpclient.on('ready', function(conn) {
+      socket = conn;
+      console.log("connected to socket");
+        // enable all alarms within range
+      socket.on('alarmON', function(){
+        // return:
+        // {"cmd": "ALARM-ON", "status": "OK|FAILED"}
+        console.log("activating alarm");
+        socket.write('{"cmd": "ALARM-ON", "status": "OK"}\n');
+      });
+      // disable all alarms within range
+      socket.on('alarmOFF', function(){
+        // return:
+        // {"cmd": "ALARM-OFF", "status": "OK|FAILED"}  
+        console.log("deactivating alarm"); 
+        socket.write('{"cmd": "ALARM-FF", "status": "OK"}\n'); 
+      })
+      // enable scan
+      socket.on('scanON', function(){
+        self.startscan();
+        // return:
+        // {"cmd": "SCAN-ON", "status": "TAGS-OK", "barcode": "0123"}
+        // {"cmd": "SCAN-ON", "status": "TAGS-MISSING", "barcode": "0123"}
+        socket.write('{"cmd": "SCAN-ON", "status": "TAGS-OK", "barcode": "102931"}\n');
+        console.log("starting scan");  
+      });
+      // disable scan
+      socket.on('scanOFF', function(){
+        self.stopscan();
+        // return:
+        // {"cmd": "SCAN-OFF", "status": "OK|FAILED"}
+        socket.write('{"cmd": "SCAN-OFF", "status": "OK"}\n');
+        console.log("stopping scan");
+      });
+      // write to RFID
+      socket.on('writeDATA', function(){
+        // return:
+        // {"cmd": "WRITE", "status": "OK|FAILED"}
+        socket.write('{"cmd": "WRITE", "status": "OK"}\n'); 
+      });  
+    });
+  }  
   
   // read reader config file
   var readerConfig = require(self.readerconfig);
   
   // data variables
-  var tagData = ''; // this stores the tag data
-  var readData = '';  // this stores the read buffer
+  var tagsInRange = [];  // tags in range from inventory
+  var readerState = 'inventory'
+  var tagData = '';      // this stores the tag data
+  var readData = '';     // this stores the read buffer
   var start_offset = 0;
   var offset = start_offset;
           
@@ -67,13 +119,17 @@ Rfidgeek.prototype.init = function() {
     buffersize: 1024
   }, true); // this is the openImmediately flag [default is true]
   
- 
   /* Workflow:
-    Reader gets 'open' event, runs:
+    Reader receives cmd:
     * emit initialize event
-    * turns on the scan loop
+    * SCAN-ON: turns on the scan loop
+    * SCAN-OFF: turns off the scan loop
+    * ALARM-ON: activates AFI alarm
+    * ALARM-OFF: deactivates AFI alarm
+    * WRITE: writes n bytes to chip
     * gets tag data, quits scan loop, activates read tag loop
     * read tag loop completed, reactivated scan loop
+
   */
   
   // EVENT LISTENERS
@@ -212,6 +268,9 @@ Rfidgeek.prototype.init = function() {
   }
   
   // inventory command
+  // ISO15693:
+  //   single_slot: 010B000304142401000000
+  //   multi_slot:  010B000304140401000000
   var inventory = function(cmd, callback) {
     reader.write(cmd, function(err) {
       if (err) { 
@@ -273,58 +332,115 @@ Rfidgeek.prototype.init = function() {
   
   // data event
   var gotData = function( data ) {
-    logger.log('debug', 'received: '+data);
     data = String(data)
-    if(!!data) {
-      // ISO15693 needs special treatment
-      if(self.tagtype == 'ISO15693') {
-        // ISO15693 NO TAG
-        if (/,40]/.test(data)) {
-          logger.log('debug', 'no tag ...');
-          if (tagData) {                              // if tagData exist then tag is considered removed
-            reader.emit('tagremoved')
-          }
-        } 
-        // ISO15693 TAG
-        else if (/,..]/.test(data)) {                 // we have an inventory response! (comma and position)
-          var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
-          if (tag && tag[1]) {
-            id = reverseTag(tag[1]);
-            logger.log("debug", "tag ID: "+id );
-            reader.emit('tagfound', id);
-          }
+    //logger.log('debug', 'received: '+data);
+
+    // Inventory state
+    if (readerState == 'inventory') {
+      var tags=data.match(/\[([0-9A-F]+)\,..\]/);
+      if (/\,..\]\r\n/.test(data)) {                   // tag in range
+        var tag=data.match(/\[([0-9A-F]+)\,..\]/);
+        logger.log('debug', 'tag in range: '+tag);
+        tagsInRange.push(tag[1]);                      // only append new tags
+      }
+      if (/\]D/.test(data)) {                          // end of inventory
+        logger.log('debug', 'tags: '+tagsInRange);
+        buffer = '';
+        if (tagsInRange.length > 0) {                  // read tags if any in range
+          logger.log('debug', 'tags are present');
+          readerState = 'read';
         }
-        
-        // ISO15693 RFID DATA
-        else if (/\[.+\]/.test(data)) {                // we have response data! (within brackets, no comma)
-          var rfiddata = data.match(/\[00(.+)\]/);     // strip initial 00 response
-          if (rfiddata) {
-            logger.log('debug', "response data! "+rfiddata[1]);
-            reader.emit('rfiddata', rfiddata[1]);
-          }
-        } 
-      // ANY OTHER PROXIMITY TAG
-      } 
-      else if (/\[.+\]/.test(data)) {
-        var tag = data.match(/\[(.+)\]/);            // tag is anything between brackets
-        if (tag && tag[1]) {
-          id = reverseTag(tag[1]);
-          logger.log('debug', "tag ID: "+id);
-          reader.emit('tagfound', id);
-        }
-      } 
+      } else {
+        buffer += data;
+      }
     }
+
+    // Read state
+    if (readerState == 'read') {
+      if(tagsInRange.length > 0) {
+        tagsInRange.forEach(function(tag) {
+          logger.log('debug', 'reading tag: '+tag);
+        });
+        tagsInRange = [];
+        readerState = 'inventory';                     // finished reading tags, return to inventory
+      }
+      else {
+        logger.log('debug', 'no tags in range!');
+      }
+    }
+
+    // if(!!data) {
+      // ISO15693 needs special treatment
+      // if(self.tagtype == 'ISO15693') {
+        // ISO15693 NO TAG
+      //   if (/\[,40\]/.test(data)) {
+      //     logger.log('debug', 'no tags ...');
+      //     if (tagData) {                              // if tagData exist then tag is considered removed
+      //       reader.emit('tagremoved')
+      //     }
+      //   } 
+      //   // ISO15693 TAG
+      //   else if (/,..]/.test(data)) {                 // we have an inventory response! (comma and position)
+      //     var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
+      //     if (tag && tag[1]) {
+      //       id = reverseTag(tag[1]);
+      //       logger.log("debug", "tag ID: "+id );
+      //       reader.emit('tagfound', id);
+      //     }
+      //   }
+        
+      //   // ISO15693 RFID DATA
+      //   else if (/\[.+\]/.test(data)) {                // we have response data! (within brackets, no comma)
+      //     var rfiddata = data.match(/\[00(.+)\]/);     // strip initial 00 response
+      //     if (rfiddata) {
+      //       logger.log('debug', "response data! "+rfiddata[1]);
+      //       reader.emit('rfiddata', rfiddata[1]);
+      //     }
+      //   } 
+      // // ANY OTHER PROXIMITY TAG
+      // } 
+      // else if (/\[.+\]/.test(data)) {
+      //   var tag = data.match(/\[(.+)\]/);            // tag is anything between brackets
+      //   if (tag && tag[1]) {
+      //     id = reverseTag(tag[1]);
+      //     logger.log('debug', "tag ID: "+id);
+      //     reader.emit('tagfound', id);
+      //   }
+    //   } 
+    // }
   }
 }
 
-Rfidgeek.prototype.start = function() {
+/*
+ * Public functions
+ */
+
+// this function starts scanning for inventory (tags)
+Rfidgeek.prototype.startscan = function() {
   var self = this;
   scanLoop = setInterval(function() { self.scanTagLoop() }, self.scaninterval );
 }
 
-Rfidgeek.prototype.stop = function() {
+Rfidgeek.prototype.stopscan = function() {
   clearInterval(scanLoop);
 }
+
+// this function writes data to ISO15693 chip
+Rfidgeek.prototype.writeISO15693 = function(tag, data) {
+  var self = this;
+}
+
+// this function deactivates AFI - cmd: 18, cmd_code: 27, data: c2
+Rfidgeek.prototype.deactivateAFI = function(tag) {
+  var self = this;
+}
+
+// this function deactivates AFI - cmd: 18, cmd_code: 27, data: 07
+Rfidgeek.prototype.activateAFI = function(tag) {
+  var self = this;
+}
+
+
 
 module.exports = Rfidgeek  
   // for browser compatibility
