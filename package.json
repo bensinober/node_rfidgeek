@@ -16,7 +16,8 @@
     "mocha": "*",
     "expect.js": "*",
     "sinon": "*",
-    "assert": "*"
+    "assert": "*",
+    "sandboxed-module": "*"
   },
   "scripts": {
     "test": "make test"
