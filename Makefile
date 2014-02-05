@@ -10,4 +10,9 @@ test-w:
 		--growl \
 		--watch
 
+cover:
+	@NODE_ENV=test istanbul cover \
+		node_modules/.bin/_mocha -- -- -u exports \
+		--reporter $(REPORTER) test/*
+
 .PHONY: test test-w

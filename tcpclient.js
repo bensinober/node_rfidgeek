@@ -1,6 +1,6 @@
 /*
- * Simple TCP Socket server
- * Connects to hub and handles I/O
+ * Simple TCP Socket client
+ * Handles I/O to external TCP Socket
  */
 
 var net  = require('net'),
@@ -29,7 +29,4 @@ var tcpclient = net.connect({port: PORT, host: HOST}, function(){
 
 });
 
-var parseCommand = function(cmd) {
-
-}
 module.exports = tcpclient;

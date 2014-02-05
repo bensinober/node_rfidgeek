@@ -1,6 +1,14 @@
-var sys = require('sys'),
-    events = require('events'),
-    com = require('serialport');
+var sys = require('sys');
+var events = require('events');
+// Mock serialport if in test mode
+if (process.env.NODE_ENV=='test') {
+  var MockedSerialPort = require('./node_modules/serialport/test_mocks/linux-hardware.js');
+  var SerialPort = MockedSerialPort.SerialPort;
+  var hardware = MockedSerialPort.hardware;
+  hardware.createPort('/dev/ttyUSB0');
+} else {
+  var SerialPort = require('serialport').SerialPort;
+}
 
 /*
  * Constructor
@@ -102,15 +110,18 @@ Rfidgeek.prototype.init = function() {
   var readerConfig = require(self.readerconfig);
   
   // data variables
-  var tagsInRange = [];  // tags in range from inventory
-  var readerState = 'inventory'
   var tagData = '';      // this stores the tag data
+  var tagBuffer = '';
   var readData = '';     // this stores the read buffer
   var start_offset = 0;
   var offset = start_offset;
-          
+  
+  // public data variables        
+  self.tagsInRange = [];  // tags in range from inventory
+  self.readerState = 'inventory'
+  
   // Create new serialport pointer
-  var reader = new com.SerialPort(self.portname , { 
+  reader = new SerialPort(self.portname , { 
     baudRate: 115200,
     dataBits: 8,
     parity: 'none',
@@ -119,6 +130,7 @@ Rfidgeek.prototype.init = function() {
     buffersize: 1024
   }, true); // this is the openImmediately flag [default is true]
   
+  self.reader = reader;
   /* Workflow:
     Reader receives cmd:
     * emit initialize event
@@ -140,10 +152,9 @@ Rfidgeek.prototype.init = function() {
     reader.on('initialize', initialize);
     reader.on('initcodes', initcodes);
     reader.on('scanloop', self.scanTagLoop);
-    reader.on('readtag', readTag);
+    reader.on('readtags', readTags);
     reader.on('rfiddata', rfidData);
     reader.on('readtagdata', readTagData);
-    
     // unregister tag if removed
     reader.on('tagremoved', function() {
       logger.log('debug', 'Tag removed');
@@ -155,20 +166,21 @@ Rfidgeek.prototype.init = function() {
     
     // register new tag and 
     // start readloop if ISO15693 tag, else ignore
-    reader.on('tagfound', function( tag ) {
-      if (tag != tagData) {                     // do nothing unless new tag is found
-        logger.log('debug', "New tag found!");
+    reader.on('tagsfound', function( tags ) {
+      if (tags.length != tagData) {                     // do nothing unless new tag is found
+        logger.log('debug', "New tag(s) found!");
         if (self.websocket) {
-          socket.sendUTF(tag);
+          socket.sendUTF(tags);
         }
-        self.emit('tagfound', tag);             // emit to calling external app!
-        tagData = tag;                          // register new tag
+        self.emit('tagsInRange', tags);             // emit to calling external app!
+        tagData = tags;                          // register new tag
         if (self.tagtype == 'ISO15693') {       // if ISO15693 tag:
-          stopScan();                           //   stop scanning for tags
-          readTag(tag);                         //   start read loop
+          stopScan();
+          /*self.stopscan();                      //   stop scanning for tags*/
+          readTags(tags);                         //   start read loop
         }
       } else {
-        logger.log('debug', "same tag still...");
+        logger.log('debug', "same tags still...");
       }
     });
   
@@ -196,7 +208,7 @@ Rfidgeek.prototype.init = function() {
     logger.log('debug', 'port closed');
   });
   
-  // FUNCTIONS
+  // PRIVATE FUNCTIONS
   
   // initialize reader and emit initcodes event
   var initialize = function(cmd, callback) {
@@ -285,9 +297,9 @@ Rfidgeek.prototype.init = function() {
   // END TAG LOOP FUNCTIONS
   
   // initialize read tag loop
-  var readTag = function( tag, callback ) {
+  var readTags = function( tags, callback ) {
     // reader.emit('initcodes', readerConfig.protocols[self.tagtype]['initcodes']);
-    logger.log('debug', "found tag id: " + tag );
+    //logger.log('debug', "found tag id: " + tags );
     readData = '';  // reset data
     offset = start_offset;
     logger.log('debug', "sending readtagdata event, offset: "+offset );
@@ -318,7 +330,7 @@ Rfidgeek.prototype.init = function() {
     readData += str;
     // rfid data consumed
     if (readData.length >= self.length_to_read || /575F4F4B/.test(str)) {
-      reader.removeListener('readtag', readTag);    
+      reader.removeListener('readtags', readTags);    
       reader.emit('rfidresult', readData);
       // reader.emit('scanloop', readerConfig.protocols[self.tagType]);
       // start new scanloop
@@ -334,35 +346,35 @@ Rfidgeek.prototype.init = function() {
   var gotData = function( data ) {
     data = String(data)
     //logger.log('debug', 'received: '+data);
-
     // Inventory state
-    if (readerState == 'inventory') {
+    if (self.readerState == 'inventory') {
       var tags=data.match(/\[([0-9A-F]+)\,..\]/);
       if (/\,..\]\r\n/.test(data)) {                   // tag in range
         var tag=data.match(/\[([0-9A-F]+)\,..\]/);
         logger.log('debug', 'tag in range: '+tag);
-        tagsInRange.push(tag[1]);                      // only append new tags
+        self.tagsInRange.push(tag[1]);                      // only append new tags
       }
       if (/\]D/.test(data)) {                          // end of inventory
-        logger.log('debug', 'tags: '+tagsInRange);
-        buffer = '';
-        if (tagsInRange.length > 0) {                  // read tags if any in range
+        logger.log('debug', 'tags: '+self.tagsInRange);
+        tagBuffer = '';
+        if (self.tagsInRange.length > 0) {                  // read tags if any in range
           logger.log('debug', 'tags are present');
-          readerState = 'read';
+          reader.emit('tagsfound', self.tagsInRange);
+          self.readerState = 'read';
         }
       } else {
-        buffer += data;
+        tagBuffer += data;
       }
     }
 
     // Read state
-    if (readerState == 'read') {
-      if(tagsInRange.length > 0) {
-        tagsInRange.forEach(function(tag) {
+    if (self.readerState == 'read') {
+      if(self.tagsInRange.length > 0) {
+        self.tagsInRange.forEach(function(tag) {
           logger.log('debug', 'reading tag: '+tag);
         });
-        tagsInRange = [];
-        readerState = 'inventory';                     // finished reading tags, return to inventory
+        self.tagsInRange = [];
+        self.readerState = 'inventory';                     // finished reading tags, return to inventory
       }
       else {
         logger.log('debug', 'no tags in range!');
@@ -412,7 +424,7 @@ Rfidgeek.prototype.init = function() {
 }
 
 /*
- * Public functions
+ * PUBLIC FUNCTIONS
  */
 
 // this function starts scanning for inventory (tags)
