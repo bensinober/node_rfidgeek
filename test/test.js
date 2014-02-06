@@ -51,21 +51,23 @@ describe('tagtypes', function() {
   
   it('iso15693 tag found should trigger readtagdata event', function(done) {
     var spy = sinon.spy();
-    var dummydata = '[1234567890,10]\r\n';
+    var dummydata = '[0123456789ABCDEF,10]\r\n';
+    var endOfInventory = '[,40]D\r\n';
     var rfid = new com({tagtype: 'ISO15693'});
     setTimeout(function () {
+      rfid.reader.emit('data', dummydata);
+      rfid.reader.emit('data', endOfInventory);
       expect(spy.called);
       done();
     }, 10); //timeout with an error 
     rfid.init();
     rfid.on('readtagdata', spy );
-    rfid.reader.emit('data', dummydata);
     
   });
 
   it('proximity tag should not trigger readtagdata event', function(done) {
     var spy = sinon.spy();
-    var dummytag = ['0C0A0B00'];
+    var dummydata = '[0123456789ABCDEF,10]\r\n';
     var rfid = new com({tagtype: 'ISO14443A'});
     setTimeout(function () {
       assert(spy.notCalled, 'Event did not fire in 10 ms.');
@@ -73,43 +75,50 @@ describe('tagtypes', function() {
     }, 10); //timeout with an error 
     rfid.init();
     rfid.on('readtagdata',spy);
-    rfid.emit('tagfound', dummytag);
+    rfid.emit('tagfound', dummydata);
   });
 
 });
 
 describe('ISO15693', function() {
   before( function(){ 
-    dummydata = '[1234567890,10]\r\n';
+    dummydata = '[0123456789ABCDEF,10]\r\n';
+    endOfInventory = '[,40]D\r\n';
     rfid = new com({tagtype: 'ISO15693'});
   });
   it('found tag should add to tags in range', function(done) {
     setTimeout(function () {
+      rfid.readerState = 'inventory';
       rfid.reader.emit('data', dummydata);
+      rfid.reader.emit('data', endOfInventory);
       assert(rfid.tagsInRange.length > 0);
-      assert(rfid.tagsInRange[0].id == '1234567890');
+      assert(rfid.tagsInRange[0].id == '0123456789ABCDEF');
       done();
     }, 10); //timeout with an error
     rfid.init();
   });
 
   it('multiple tags in range should be added', function(done) {
-    var dummydata2 = '[123456789A,11]\r\n';
+    var dummydata2 = '[0123456789ABCDE0,11]\r\n';
     setTimeout(function () {
+      rfid.readerState = 'inventory';
       rfid.reader.emit('data', dummydata);
       rfid.reader.emit('data', dummydata2);
+      rfid.reader.emit('data', endOfInventory);
       assert(rfid.tagsInRange.length == 2);
-      assert(rfid.tagsInRange[1].id == '123456789A');
+      assert(rfid.tagsInRange[1].id == '0123456789ABCDE0');
       done();
     }, 10); //timeout with an error
     rfid.init();
   });  
 
   it('conflicting tags should be ignored', function(done) {
-    var dummydata2 = '[123456789A,z]\r\n';   // 'z' after comma indicates conflict
+    var dummydata2 = '[0123456789ABCDE0,z]\r\n';   // 'z' after comma indicates conflict
     setTimeout(function () {
+      rfid.readerState = 'inventory';
       rfid.reader.emit('data', dummydata);
       rfid.reader.emit('data', dummydata2);
+      rfid.reader.emit('data', endOfInventory);
       assert(rfid.tagsInRange.length == 1);
       done();
     }, 10); //timeout with an error 
@@ -120,9 +129,11 @@ describe('ISO15693', function() {
     var dummydata2 = '[1234567890,11]\r\n'; 
     var dummydata3 = '[1234567890,12]D\r\n';   
     setTimeout(function () {
+      rfid.readerState = 'inventory';
       rfid.reader.emit('data', dummydata);
       rfid.reader.emit('data', dummydata2);
       rfid.reader.emit('data', dummydata3);
+      rfid.reader.emit('data', endOfInventory);
       assert(rfid.tagsInRange.length == 1);
       done();
     }, 10); //timeout with an error 
@@ -132,6 +143,7 @@ describe('ISO15693', function() {
   it('found tag should not initiate read tag content until inventory is complete', function(done) {
     var spy = sinon.spy();
     setTimeout(function () {
+      rfid.readerState = 'inventory';
       rfid.reader.emit('data', dummydata);
       assert(spy.notCalled, 'Event did not fire in 10 ms.');
       done();
@@ -142,10 +154,10 @@ describe('ISO15693', function() {
 
   it('found tag should initiate read tag content when inventory is complete', function(done) {
     var spy = sinon.spy();
-    var lasttag = '[123456789A,11]D\r\n';   // single D after bracket indicates last tag
     setTimeout(function () {
+      rfid.readerState = 'inventory';
       rfid.reader.emit('data', dummydata);
-      rfid.reader.emit('data', lasttag);
+      rfid.reader.emit('data', endOfInventory);
       assert(spy.called, 'Event did fire in 10 ms.');
       done();
     }, 10); //timeout with an error
@@ -155,10 +167,10 @@ describe('ISO15693', function() {
 
   it('all found tags should be read', function(done) {
     var spy = sinon.spy();
-    var lasttag = '[123456789A,11]D\r\n';   // single D after bracket indicates last tag
     setTimeout(function () {
+      rfid.readerState = 'inventory';
       rfid.reader.emit('data', dummydata);
-      rfid.reader.emit('data', lasttag);
+      rfid.reader.emit('data', endOfInventory);
       assert(spy.calledOnce, 'Event did fire in 10 ms.');
       done();
     }, 10); //timeout with an error

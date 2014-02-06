@@ -386,12 +386,13 @@ Rfidgeek.prototype.init = function() {
 
       // ']D' => end of inventory
       if (/\]D/.test(data)) {  
-        tagBuffer += data;   // make sure last position is also counted                   
-        if (/\,..\]\r\n/.test(tagBuffer)) {                     // tags in range
+        tagBuffer += data;                                               // make sure last position is also counted    
+        if (/\,[0-9A-F]{2}\]\r\n/.test(tagBuffer)) {                     // we have tags in range!
           //var str = tagBuffer.replace(/\r\n/g, "");
-          var tags=tagBuffer.match(/\[[0-9A-F]{16}\,/g);    // tag id's are [ID,POS]
+          var tags=tagBuffer.match(/\[[0-9A-F]{16}\,[0-9A-F]{2}/g);      // tag id's are      [ID,POS]
+          var conflicingtags=tagBuffer.match(/\[[0-9A-F]{16}\,z/g);      // conflict id's are [ID,z]   - ignored for now
           tags.forEach(function(tag) {
-            var id = tag.replace(/[^0-9A-F]/g, '');         // clean ids
+            var id = tag.substr(1,16);
             // append only tags that isn't already in array
             if (!self.tagsInRange.some(function(some) { return some.id === id }) ) {
               self.tagsInRange.push({id: id});
@@ -405,6 +406,7 @@ Rfidgeek.prototype.init = function() {
           reader.emit('readtags', self.tagsInRange);
           self.stopscan();
         } else {
+          console.log(data)
           logger.log('debug', 'no tags in range!');
         }                            
 
@@ -484,12 +486,12 @@ Rfidgeek.prototype.init = function() {
 Rfidgeek.prototype.startscan = function() {
   var self = this;
   self.readerState = 'inventory';
-  scanLoop = setInterval(function() { self.scanTagLoop() }, self.scaninterval );
+  self.scanLoop = setInterval(function() { self.scanTagLoop() }, self.scaninterval );
 }
 
 Rfidgeek.prototype.stopscan = function() {
   var self = this;
-  clearInterval(scanLoop);
+  clearInterval(self.scanLoop);
   if (self.readerState == 'inventory') {
     self.readerState = 'paused';
   }
