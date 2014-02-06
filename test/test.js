@@ -177,6 +177,21 @@ describe('ISO15693', function() {
     rfid.init();
     rfid.reader.on('readtagdata',spy);
   });
+});
 
-  it('should have a pending test');
+describe('TCP Socket', function() {
+  before( function(){ 
+    rfid = new com({tagtype: 'ISO15693', tcpsocket: true});
+  });
+
+  it('should initiate a writable socket', function(done) {
+    setTimeout(function () {
+      assert(rfid.socket);
+      done();
+    }, 10); //timeout with an error
+    rfid.init();
+  });
+
+  it('should send tags to connected socket');
+
 });

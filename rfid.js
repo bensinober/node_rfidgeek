@@ -72,44 +72,74 @@ Rfidgeek.prototype.init = function() {
   if(self.tcpsocket) {
     var tcpclient = require("./tcpclient.js");
     tcpclient.on('ready', function(conn) {
-      socket = conn;
-      console.log("connected to socket");
+      var socket = conn;
+      self.socket = socket;  // expose socket
+      logger.log('debug', 'Connected to socket');
         // enable all alarms within range
-      socket.on('alarmON', function(){
-        // return:
-        // {"cmd": "ALARM-ON", "status": "OK|FAILED"}
-        console.log("activating alarm");
-        socket.write('{"cmd": "ALARM-ON", "status": "OK"}\n');
+      conn.on('alarmON', function(){
+        logger.log('debug', 'Activating alarm');
+        self.activateAFI(function(err) {
+          if(err) {
+            logger.log('error', err);
+            socket.write('{"cmd": "ALARM-ON", "status": "FAILED"}\n');
+          } else {
+            socket.write('{"cmd": "ALARM-ON", "status": "OK"}\n');
+          }
+        });
       });
       // disable all alarms within range
       socket.on('alarmOFF', function(){
-        // return:
-        // {"cmd": "ALARM-OFF", "status": "OK|FAILED"}  
-        console.log("deactivating alarm"); 
-        socket.write('{"cmd": "ALARM-FF", "status": "OK"}\n'); 
+        logger.log('debug', 'Deactivating alarms');
+        self.deactivateAFI(function(err) {
+          if(err) {
+            logger.log('error', err);
+            socket.write('{"cmd": "ALARM-OFF", "status": "FAILED"}\n');
+          } else {
+            socket.write('{"cmd": "ALARM-OFF", "status": "OK"}\n');
+          }
+        });
       })
-      // enable scan
+      // enable scanning
       socket.on('scanON', function(){
-        self.startscan();
+        logger.log('debug', 'Starting scanning for tags');
+        self.startscan(function(err) {
+          if(err) {
+            logger.log('error', err);
+            socket.write('{"cmd": "SCAN-ON", "status": "FAILED"}\n');
+          } else {
+            socket.write('{"cmd": "SCAN-ON", "status": "OK"}\n');
+          }          
+        });
         // return:
         // {"cmd": "SCAN-ON", "status": "TAGS-OK", "barcode": "0123"}
         // {"cmd": "SCAN-ON", "status": "TAGS-MISSING", "barcode": "0123"}
-        socket.write('{"cmd": "SCAN-ON", "status": "TAGS-OK", "barcode": "102931"}\n');
-        console.log("starting scan");  
       });
       // disable scan
       socket.on('scanOFF', function(){
-        self.stopscan();
-        // return:
-        // {"cmd": "SCAN-OFF", "status": "OK|FAILED"}
-        socket.write('{"cmd": "SCAN-OFF", "status": "OK"}\n');
-        console.log("stopping scan");
+        logger.log('debug', 'Stopping scanning for tags');
+        self.stopscan(function(err) {
+          if(err) {
+            logger.log('error', err);
+            socket.write('{"cmd": "SCAN-OFF", "status": "FAILED"}\n');
+          } else {
+            socket.write('{"cmd": "SCAN-OFF", "status": "OK"}\n');
+            self.tagsInRange = [];
+          }          
+        });        
       });
       // write to RFID
-      socket.on('writeDATA', function(){
+      socket.on('writeDATA', function(id, data){
         // return:
         // {"cmd": "WRITE", "status": "OK|FAILED"}
-        socket.write('{"cmd": "WRITE", "status": "OK"}\n'); 
+        logger.log('debug', 'Writing to tag: '+id+', data: '+data);
+        self.writeISO15693(function(id, data, err) {
+          if(err) {
+            logger.log('error', err);
+            socket.write('{"cmd": "SCAN-OFF", "status": "FAILED"}\n');
+          } else {
+            socket.write('{"cmd": "SCAN-OFF", "status": "OK"}\n');
+          }          
+        });
       });  
     });
   }  
@@ -144,7 +174,7 @@ Rfidgeek.prototype.init = function() {
                           // [{ id: <id>, data: <string> }]
   
   // Create new serialport pointer
-  reader = new SerialPort(self.portname , { 
+  var reader = new SerialPort(self.portname , { 
     baudRate: 115200,
     dataBits: 8,
     parity: 'none',
@@ -199,6 +229,18 @@ Rfidgeek.prototype.init = function() {
           socket.sendUTF(tags);
         }
         self.emit('tagsInRange', tags);             // emit to calling external app!
+        if (self.socket) {
+          tags.forEach(function(tag) {
+            var response = { 
+              cmd: "SCAN-ON",
+              status: "TAGS-OK",
+              id: tag.id,
+              data: tag.data
+            };
+            logger.log('debug', "resoponse to socket: "+response);
+            self.socket.write(JSON.stringify(response)+"\n");
+          })
+        }
         // tagData = tags;                          // register new tag
         if (self.tagtype == 'ISO15693') {           // if ISO15693 tag:
        //   stopScan();
@@ -363,11 +405,23 @@ Rfidgeek.prototype.init = function() {
     logger.log('debug', "rfiddata received: " + tagdata );
     // append rfiddata to tags missing data, hopefully they come in right order
     self.tagsInRange.some(function(item) { 
-      if (!item.data) { return item.data = tagdata; } 
-      else { 
-        logger.log('debug', "all tags read!\n" + self.tagsInRange );
+      if (!item.data) { 
+        var tagContent = {
+          nitems: tagdata.substring(1,2).charCodeAt(0),
+          itemno: tagdata.substring(2,3).charCodeAt(0),
+          barcode: tagdata.substring(5,19),
+          md5sum: tagdata.substring(19,21),
+          country: tagdata.substring(21,23),
+          library: tagdata.substring(23,31)
+        }
+          return item.data = tagContent; 
       }
     });
+    if ( self.tagsInRange.every(function(item) { return (item.data) }) ) {
+      logger.log('debug', "all tags read!\n" + self.tagsInRange );
+      reader.emit('tagsfound', self.tagsInRange);
+    }
+
     //reader.removeListener('readtags', readTags);    
     //reader.emit('rfidresult', str);
     // start new scanloop
@@ -401,12 +455,12 @@ Rfidgeek.prototype.init = function() {
           self.readerState = 'readtags';  // toggle readerstate
           tagBuffer = '';                 // empty tag buffer
           logger.log('debug', 'tags in range: '+self.tagsInRange);
-          reader.emit('tagsfound', self.tagsInRange);
-          // TODO: error here
+          //reader.emit('tagsfound', self.tagsInRange);
           reader.emit('readtags', self.tagsInRange);
-          self.stopscan();
+          self.stopscan(function(err) {
+            if (err) { logger.log('error', 'error stopping scanning: '+err); }
+          });
         } else {
-          console.log(data)
           logger.log('debug', 'no tags in range!');
         }                            
 
@@ -426,55 +480,19 @@ Rfidgeek.prototype.init = function() {
           reader.emit('rfiddata', rfiddata[1]);
         }
       }
-      //   self.tagsInRange.forEach(function(tag) {
-      //     logger.log('debug', 'reading tag: '+tag);
-      //   });
-      //   self.tagsInRange = [];
-      //   self.readerState = 'inventory';                     // finished reading tags, return to inventory
       else {
         logger.log('debug', 'error reading tag!');
       }
     }
 
-    // if(!!data) {
-      // ISO15693 needs special treatment
-      // if(self.tagtype == 'ISO15693') {
-        // ISO15693 NO TAG
-      //   if (/\[,40\]/.test(data)) {
-      //     logger.log('debug', 'no tags ...');
-      //     if (tagData) {                              // if tagData exist then tag is considered removed
-      //       reader.emit('tagremoved')
-      //     }
-      //   } 
-      //   // ISO15693 TAG
-      //   else if (/,..]/.test(data)) {                 // we have an inventory response! (comma and position)
-      //     var tag=data.match(/\[([0-9A-F]+)\,..\]/);  // check for actual tag - strip away empty tag location ids (eg. ',40) 
-      //     if (tag && tag[1]) {
-      //       id = reverseTag(tag[1]);
-      //       logger.log("debug", "tag ID: "+id );
-      //       reader.emit('tagfound', id);
-      //     }
-      //   }
-        
-      //   // ISO15693 RFID DATA
-      //   else if (/\[.+\]/.test(data)) {                // we have response data! (within brackets, no comma)
-      //     var rfiddata = data.match(/\[00(.+)\]/);     // strip initial 00 response
-      //     if (rfiddata) {
-      //       logger.log('debug', "response data! "+rfiddata[1]);
-      //       reader.emit('rfiddata', rfiddata[1]);
-      //     }
-      //   } 
-      // // ANY OTHER PROXIMITY TAG
-      // } 
-      // else if (/\[.+\]/.test(data)) {
+      // ANY OTHER PROXIMITY TAG
+      // if (/\[.+\]/.test(data)) {
       //   var tag = data.match(/\[(.+)\]/);            // tag is anything between brackets
       //   if (tag && tag[1]) {
       //     id = reverseTag(tag[1]);
       //     logger.log('debug', "tag ID: "+id);
       //     reader.emit('tagfound', id);
       //   }
-    //   } 
-    // }
   }
 }
 
@@ -483,33 +501,37 @@ Rfidgeek.prototype.init = function() {
  */
 
 // this function starts scanning for inventory (tags)
-Rfidgeek.prototype.startscan = function() {
+Rfidgeek.prototype.startscan = function(callback) {
   var self = this;
   self.readerState = 'inventory';
   self.scanLoop = setInterval(function() { self.scanTagLoop() }, self.scaninterval );
+  callback();
 }
 
-Rfidgeek.prototype.stopscan = function() {
+Rfidgeek.prototype.stopscan = function(callback) {
   var self = this;
   clearInterval(self.scanLoop);
   if (self.readerState == 'inventory') {
     self.readerState = 'paused';
   }
+  callback();
 }
 
 // this function writes data to ISO15693 chip
-Rfidgeek.prototype.writeISO15693 = function(tag, data) {
+Rfidgeek.prototype.writeISO15693 = function(tag, callback) {
   var self = this;
 }
 
 // this function deactivates AFI - cmd: 18, cmd_code: 27, data: c2
-Rfidgeek.prototype.deactivateAFI = function(tag) {
+Rfidgeek.prototype.deactivateAFI = function(callback) {
   var self = this;
+  callback();
 }
 
 // this function deactivates AFI - cmd: 18, cmd_code: 27, data: 07
-Rfidgeek.prototype.activateAFI = function(tag) {
+Rfidgeek.prototype.activateAFI = function(callback) {
   var self = this;
+  callback("Could not activate!");
 }
 
 
