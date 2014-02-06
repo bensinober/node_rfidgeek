@@ -1,3 +1,12 @@
+/*
+ * RFIDGeek Texas Instrument RFID Serial port connector
+ * References: 
+ *  TI TRF9770A Evaluation Module (EVM) User's Guide, p. 8:
+ *    <http://www.ti.com/litv/pdf/slou321a>
+ *  PyRFIDGeek (python module):
+ *    <https://github.com/scriptotek/pyrfidgeek/blob/master/pyrfidgeek/rfidgeek.py>
+ */
+
 var sys = require('sys');
 var events = require('events');
 // Mock serialport if in test mode
@@ -23,8 +32,7 @@ function Rfidgeek(options) {
   this.tagtype        = options.tagtype   || 'ISO15693' ;
   this.scaninterval   = options.scaninterval   || 1000 ;
   this.readerconfig   = options.readerconfig   || './univelop_500b.json' ;
-  this.length_to_read = options.length_to_read || 8 ;
-  this.bytes_per_read = options.bytes_per_read || 1 ;
+  this.blocks_to_read = options.blocks_to_read || '08' ;
 
   logger = require('./logger');
   logger.debugLevel = options.debug || 'none' ;
@@ -40,7 +48,7 @@ function Rfidgeek(options) {
 sys.inherits(Rfidgeek, events.EventEmitter);
 
 /*
- * exported init function
+ * Exported main init function
  */
  
 Rfidgeek.prototype.init = function() {
@@ -113,18 +121,28 @@ Rfidgeek.prototype.init = function() {
   var tagData = '';      // this stores the tag data
   var tagBuffer = '';
   var readData = '';     // this stores the read buffer
-  var start_offset = 0;
+  var start_offset = '00';
   var offset = start_offset;
   
+  // OBJECT CONSTANTS
+  // 3 bytes: flag, cmd and cmd_code
+  // command is composed of :
+  // '01' + length + '00','03','04', +flags+cmd+cmd_code
+  var FLAGS = {
+    inventory_single: ['24','14','01'],
+    inventory_multi:  ['04','14','01'],
+    read_tag:         ['20','18','23'],
+    write_block:      ['20','18','21'],
+    unlock_afi:       ['02','18','27'],
+    lock_afi:         ['00','18','27']
+  }
+
   // public data variables
-  self.readerState = 'inventory'
+  self.readerState = 'paused'
   self.selectedTag = '';
   self.tagsInRange = [];  // tags in range from inventory
                           // [{ id: <id>, data: <string> }]
   
-        // self.tagsInRange.forEach(function(tag) {
-        //   logger.log('debug', 'reading tag: '+tag);
-        // });  
   // Create new serialport pointer
   reader = new SerialPort(self.portname , { 
     baudRate: 115200,
@@ -158,9 +176,9 @@ Rfidgeek.prototype.init = function() {
     
     reader.on('initialize', initialize);
     reader.on('initcodes', initcodes);
-    reader.on('scanloop', scanTagLoop);
+    reader.on('scanloop', self.scanTagLoop);
     reader.on('readtags', readTags);
-    // reader.on('rfiddata', rfidData);
+    reader.on('rfiddata', rfidData);
     reader.on('readtagdata', readTagData);
     // unregister tag if removed
     reader.on('tagremoved', function() {
@@ -182,16 +200,18 @@ Rfidgeek.prototype.init = function() {
         }
         self.emit('tagsInRange', tags);             // emit to calling external app!
         // tagData = tags;                          // register new tag
-        if (self.tagtype == 'ISO15693') {       // if ISO15693 tag:
-          stopScan();
-          /*self.stopscan();                      //   stop scanning for tags*/
-          readTags(tags);                         //   start read tags content
+        if (self.tagtype == 'ISO15693') {           // if ISO15693 tag:
+       //   stopScan();
+          /*self.stopscan();                        //   stop scanning for tags*/
+        //  readTags(tags);                           //   start read tags content
         }
       } else {
         logger.log('debug', "no tags in range...");
       }
     });
-  
+
+    // send resulting tag to external app
+    // TODO: maybe kill this?  
     reader.on('rfidresult', function(data) {
       logger.log('debug', "Full tag received: "+data);
       if (self.websocket) {
@@ -203,7 +223,6 @@ Rfidgeek.prototype.init = function() {
     reader.on('data', gotData);
     
     reader.emit('initialize', readerConfig.initialize['init']);
-    reader.emit('scanloop', readerConfig.protocols[self.tagtype]);
   });
   
   // error
@@ -230,24 +249,24 @@ Rfidgeek.prototype.init = function() {
     });
   }
   
-  // run initcodes (before each tag loop)
+  // run initcodes (with delay to ensure right execution)
   var initcodes = function(cmd, callback) {
-    reader.write(cmd['register_write_request'], function(err,cb) {
-      if (err){ callback(err)}
-      else { 
-        reader.write(cmd['agc_enable'], function(err,cb) {
-          if (err){ callback(err)}
-          else { 
-            reader.write(cmd['am_input'], function(err,cb) {
-            if (err){ callback(err,cb)}
-            else { 
-              logger.log('debug', "ran initcodes!");
-              }
-            });
-          }
-        });
-      }
-    });
+    setTimeout(function () {
+      reader.write(cmd['register_write_request'], function(err) {
+        if (err){ callback(err); }
+        setTimeout(function () {
+          reader.write(cmd['agc_enable'], function(err) {
+            if (err){ callback(err); }
+            setTimeout(function () {
+              reader.write(cmd['am_input'], function(err) {
+                if (err){ callback(err); }
+                else { logger.log('debug', "ran initcodes!"); }
+              });
+            }, 10);
+          });
+        }, 10);
+      });
+    }, 10);
   }
   
   // this function reverses a hex string to return tag ID
@@ -274,9 +293,9 @@ Rfidgeek.prototype.init = function() {
   }
   
   // TAG LOOP FUNCTIONS - do inventory check
-  var scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[self.tagtype]) }, 1000 );
+  //var scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[self.tagtype]) }, 1000 );
     
-  var scanTagLoop = function (){ 
+  self.scanTagLoop = function (){ 
     // run inventory check in intervals
     inventory(readerConfig.protocols[self.tagtype]['inventory'], function(err) {
       if (err) { logger.log('error', err) }
@@ -306,97 +325,112 @@ Rfidgeek.prototype.init = function() {
   
   // READ TAG DATA
   var readTags = function( tags, callback ) {
-    // reader.emit('initcodes', readerConfig.protocols[self.tagtype]['initcodes']);
-    //logger.log('debug', "found tag id: " + tags );
-    tags.forEach(function(tag) {
-      readData = '';  // reset data
-      self.selectedTag = tag.id;
-      offset = start_offset;
-      logger.log('debug', "sending readtagdata event, id: "+tag.id+", offset: "+offset );
-      reader.emit('readtagdata', tag.id, offset );
-      
-    })
+    
+    // need to make an anonymous function loop with a 100ms for reader to be able to read all tags
+    var i = 0;
+    (function loopFn() {
+      logger.log('debug', "sending readtagdata event, id: "+tags[i].id );
+      reader.emit('readtagdata', tags[i].id );
+      i++;
+      if (i<tags.length) { setTimeout(loopFn, 100); }
+    })();
+    //reader.removeListener('readtags', readTags);    
+    //reader.emit('rfidresult', tags);
+    // start new scanloop
+    //scanLoop = setInterval(function() { self.scanTagLoop(readerConfig.protocols[self.tagtype]) }, self.scaninterval );
   }
   
   // loop to read data from ISO15693 
-  var readTagData = function( id, offset, callback ) {
-    if(offset != self.length_to_read) {
-      // cmd = ['01','0C','00','03','04','18','00','23', dec2hex(offset), dec2hex(self.bytes_per_read), '00', '00'].join('');
-      cmd = ['01','14','00','03','04','18','00','23', id, dec2hex(offset), dec2hex(self.bytes_per_read), '00', '00'].join('');
-      logger.log('debug', "offset: "+offset+ " id: "+id+" tagdata cmd: " + cmd );
+  var readTagData = function( id, callback ) {
+    var offset = '00';
+    // cmd = ['01','0C','00','03','04','18','00','23', dec2hex(offset), dec2hex(self.bytes_per_read), '00', '00'].join('');
+    cmd = ['01','14','00','03','04','18','20','23', id, offset, self.blocks_to_read, '00', '00'].join('');
+    logger.log('debug', "offset: "+offset+ " id: "+id+" tagdata cmd: " + cmd );
+    process.nextTick(function() {
       reader.write(cmd, function(err) {
         if(err) { throw new Error (err) }
-        offset += self.bytes_per_read +1; // need to shift offset by 1
-        // do we need to delay read to next event loop?
-        process.nextTick(function() {
-          readTagData(id, offset);
-        });
       });
-    }
+    });
+  }
+
+  /*
+   * 'rfiddata' EVENT - fires when tag data is read
+   *                  - hopefully tags come in right order as there is no async way to ensure
+   *                  - maybe handle data according to self.readerState?
+   */  
+  var rfidData = function( data, callback) {
+    var tagdata = hex2ascii(data);
+    logger.log('debug', "rfiddata received: " + tagdata );
+    // append rfiddata to tags missing data, hopefully they come in right order
+    self.tagsInRange.some(function(item) { 
+      if (!item.data) { return item.data = tagdata; } 
+      else { 
+        logger.log('debug', "all tags read!\n" + self.tagsInRange );
+      }
+    });
+    //reader.removeListener('readtags', readTags);    
+    //reader.emit('rfidresult', str);
+    // start new scanloop
+    //scanLoop = setInterval(function() { self.scanTagLoop(readerConfig.protocols[self.tagtype]) }, self.scaninterval );
   }
   
-  // function rfidData, run on rfiddata event
-  // var rfidData = function( data, callback) {
-  //   var str = hex2ascii(data);
-  //   //var str = data;
-  //   logger.log('debug', "rfiddata received: " + str );
-  //   readData += str;
-  //   // rfid data consumed
-  //   if (readData.length >= self.length_to_read || /575F4F4B/.test(str)) {
-  //     reader.removeListener('readtags', readTags);    
-  //     reader.emit('rfidresult', readData);
-  //     // reader.emit('scanloop', readerConfig.protocols[self.tagType]);
-  //     // start new scanloop
-  //     scanLoop = setInterval(function() { self.scanTagLoop(readerConfig.protocols[self.tagtype]) }, self.scaninterval );
-  //   } else {
-  //     // continue reading
-  //     offset += self.bytes_per_read + 1; // need to shift offset with 1
-  //     reader.emit('readtagdata', null, offset);
-  //   }
-  // }
-  
-  // data event
+  /*
+   * 'data' EVENT - fires on any data received from serialport, 
+   *              - thus needs to handle data according to self.readerState
+   */
   var gotData = function( data ) {
     data = String(data)
-    //logger.log('debug', 'received: '+data);
+    logger.log('debug', 'received: '+data);
     // Inventory state
     if (self.readerState == 'inventory') {
-      var tags=data.match(/\[([0-9A-F]+)\,..\]/);
-      if (/\,..\]\r\n/.test(data)) {                     // tag in range
-        var tag=data.match(/\[([0-9A-F]+)\,..\]/);
-        logger.log('debug', 'tag in range: '+tag);
-        
-        // don't append tag if already in array
-        if (!self.tagsInRange.some(function(some) { return some.id === tag[1] }) ) {
-          self.tagsInRange.push({id: tag[1]});
-        }
-      }
-      if (/\]D/.test(data)) {                            // end of inventory
-        logger.log('debug', 'tags: '+self.tagsInRange);
-        tagBuffer = '';
-        if (self.tagsInRange.length > 0) {                  // read tags only if any in range
-          logger.log('debug', 'tags are present!');
+
+      // ']D' => end of inventory
+      if (/\]D/.test(data)) {  
+        tagBuffer += data;   // make sure last position is also counted                   
+        if (/\,..\]\r\n/.test(tagBuffer)) {                     // tags in range
+          //var str = tagBuffer.replace(/\r\n/g, "");
+          var tags=tagBuffer.match(/\[[0-9A-F]{16}\,/g);    // tag id's are [ID,POS]
+          tags.forEach(function(tag) {
+            var id = tag.replace(/[^0-9A-F]/g, '');         // clean ids
+            // append only tags that isn't already in array
+            if (!self.tagsInRange.some(function(some) { return some.id === id }) ) {
+              self.tagsInRange.push({id: id});
+            }
+          });
+          self.readerState = 'readtags';  // toggle readerstate
+          tagBuffer = '';                 // empty tag buffer
+          logger.log('debug', 'tags in range: '+self.tagsInRange);
           reader.emit('tagsfound', self.tagsInRange);
-          self.readerState = 'read';
-        }
+          // TODO: error here
+          reader.emit('readtags', self.tagsInRange);
+          self.stopscan();
+        } else {
+          logger.log('debug', 'no tags in range!');
+        }                            
+
       } else {
-        tagBuffer += data;
+        tagBuffer += data;      
       }
     }
 
     // Read state
     // reads anything between [] as data from tag
     // needs to read one tag at a time
-    if (self.readerState == 'read') {
+    if (self.readerState == 'readtags') {
       if(self.tagsInRange.length > 0) {
+        var rfiddata = data.match(/\[00(.+)\]/);     // strip initial 00 response
+        if (rfiddata) {
+          logger.log('debug', "response data! "+rfiddata[1]);
+          reader.emit('rfiddata', rfiddata[1]);
+        }
+      }
       //   self.tagsInRange.forEach(function(tag) {
       //     logger.log('debug', 'reading tag: '+tag);
       //   });
       //   self.tagsInRange = [];
       //   self.readerState = 'inventory';                     // finished reading tags, return to inventory
-      }
       else {
-        logger.log('debug', 'no tags in range!');
+        logger.log('debug', 'error reading tag!');
       }
     }
 
@@ -449,11 +483,16 @@ Rfidgeek.prototype.init = function() {
 // this function starts scanning for inventory (tags)
 Rfidgeek.prototype.startscan = function() {
   var self = this;
+  self.readerState = 'inventory';
   scanLoop = setInterval(function() { self.scanTagLoop() }, self.scaninterval );
 }
 
 Rfidgeek.prototype.stopscan = function() {
+  var self = this;
   clearInterval(scanLoop);
+  if (self.readerState == 'inventory') {
+    self.readerState = 'paused';
+  }
 }
 
 // this function writes data to ISO15693 chip

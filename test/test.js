@@ -132,12 +132,12 @@ describe('ISO15693', function() {
   it('found tag should not initiate read tag content until inventory is complete', function(done) {
     var spy = sinon.spy();
     setTimeout(function () {
+      rfid.reader.emit('data', dummydata);
       assert(spy.notCalled, 'Event did not fire in 10 ms.');
       done();
     }, 10); //timeout with an error
     rfid.init();
     rfid.reader.on('tagsInRange',spy);
-    rfid.reader.emit('data', dummydata);
   });
 
   it('found tag should initiate read tag content when inventory is complete', function(done) {
