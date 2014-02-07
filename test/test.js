@@ -2,7 +2,10 @@ var assert = require('assert');
 var expect = require('expect.js');
 var sinon = require('sinon');
 var com = require('../rfid');
-var tcp = require('../tcpclient');
+var net = require('net');
+
+var rfid = new com();
+var spy = sinon.spy();
 
 describe('init',function() {
   it('should expose a base function', function() {
@@ -24,7 +27,6 @@ describe('init',function() {
 
 describe('Rfidgeek', function() {
   it('should create a Rfidgeek object with default values', function() {
-    var rfid = new com();
     expect(rfid.websocket).to.be(undefined);
     expect(rfid.portname).to.be('/dev/ttyUSB0');
   });
@@ -37,15 +39,24 @@ describe('Rfidgeek', function() {
 });
 
 describe('Logger', function() {
+
   it('should instantiate a logger, but with no logging as default', function() {
-    var rfid = new com();
     expect(logger.debugLevel).to.be('none');
+  });
+  it('should throw error on opening reader to logger', function(done) {
+    setTimeout(function () {
+      expect(spy.calledWith('something bad'));
+      done();
+    }, 10); //timeout with an error 
+    rfid.init();
+    rfid.reader.on('error', spy );
+    rfid.reader.emit('error', 'log something bad');
   });
 });
 
 describe('tagtypes', function() {
   it('should accept tagtype parameter', function() {
-    var rfid = new com({tagtype: 'ISO14443A'});
+    rfid.tagtype = 'ISO14443A';
     expect(rfid.tagtype).to.be('ISO14443A');
   });
   
@@ -106,7 +117,7 @@ describe('ISO15693', function() {
       rfid.reader.emit('data', dummydata2);
       rfid.reader.emit('data', endOfInventory);
       assert(rfid.tagsInRange.length == 2);
-      assert(rfid.tagsInRange[1].id == '0123456789ABCDE0');
+      expect(rfid.tagsInRange[1].id).to.be('0123456789ABCDE0');
       done();
     }, 10); //timeout with an error
     rfid.init();
@@ -179,18 +190,66 @@ describe('ISO15693', function() {
   });
 });
 
-describe('TCP Socket', function() {
-  before( function(){ 
-    rfid = new com({tagtype: 'ISO15693', tcpsocket: true});
+describe('ISO15693 data', function() {
+  before( function() {
+    rfid.tagtype = 'ISO15693';
+    tagdata1 = '[001102013130303030303030303030303030303187264E4F30323033303030300000000000]';
+    tagdata2 = '[001102023130303030303030303030303030303187264E4F30323033303030300000000000]';
   });
 
-  it('should initiate a writable socket', function(done) {
+  it('read tag should render data correctly', function(done) {
     setTimeout(function () {
-      assert(rfid.socket);
+      rfid.tagsInRange.push({id: '0123456789ABCDE0'});
+      rfid.readerState = 'readtags';
+      rfid.reader.emit('data', tagdata1);
+      expect(rfid.tagsInRange[0].data.itemno).to.be(1);
+      expect(rfid.tagsInRange[0].data.nitems).to.be(2);
+      expect(rfid.tagsInRange[0].data.barcode).to.be('00000000000001');
       done();
     }, 10); //timeout with an error
     rfid.init();
   });
+
+  it('read tag should render two tags correctly', function(done) {
+    setTimeout(function () {
+      rfid.tagsInRange.push({id: '0123456789ABCDE0'});
+      rfid.tagsInRange.push({id: '0123456789ABCDEA'});
+      rfid.readerState = 'readtags';
+      rfid.reader.emit('data', tagdata1);
+      rfid.reader.emit('data', tagdata2);
+      expect(rfid.tagsInRange[0].data.itemno).to.be(1);
+      expect(rfid.tagsInRange[1].data.itemno).to.be(2);
+      done();
+    }, 10); //timeout with an error
+    rfid.init();
+  });
+
+  it('when all tags are read and all required are present, TAGS-OK should be sent', function(done) {
+    setTimeout(function () {
+      rfid.tagsInRange.push({id: '0123456789ABCDE0'});
+      rfid.tagsInRange.push({id: '0123456789ABCDEA'});
+      rfid.readerState = 'readtags';
+      rfid.reader.emit('data', tagdata1);
+      rfid.reader.emit('data', tagdata2);
+      expect(spy.called);
+      done();
+    }, 10); //timeout with an error
+    rfid.init();
+    rfid.reader.on('tagsfound',spy);
+  });  
+});
+
+describe('TCP Socket', function() {
+  before( function(){ 
+    rfid.tagtype = 'ISO15693';
+    rfid.websocket = true;
+  });
+
+/*  it('should initiate a writable websocket', function(done) {
+    rfid.init();
+    expect(rfid.socket).to.be(true);
+    done();
+  });*/
 
   it('should send tags to connected socket');
 

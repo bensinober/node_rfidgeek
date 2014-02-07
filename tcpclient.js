@@ -9,8 +9,8 @@
  */
 
 var net  = require('net'),
-    PORT = process.argv[2] || 6767,
-    HOST = process.argv[3] || '10.172.2.202';
+    PORT = process.argv[2] || 4444, //6767,
+    HOST = process.argv[3] || 'localhost' //10.172.2.202';
 
 var tcpclient = net.connect({port: PORT, host: HOST}, function(){
   var responseString = '';
@@ -47,9 +47,9 @@ var tcpclient = net.connect({port: PORT, host: HOST}, function(){
   });
 
   tcpclient.on('end', function() {
-    console.log('server connect');
+    console.log('server disconnect');
   });
 
 });
-
+tcpclient.emit('ready', tcpclient);
 module.exports = tcpclient;

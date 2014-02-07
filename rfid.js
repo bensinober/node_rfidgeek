@@ -54,6 +54,149 @@ sys.inherits(Rfidgeek, events.EventEmitter);
 Rfidgeek.prototype.init = function() {
   var self = this;
 
+  /*
+   * VARIABLES AND CONSTANTS
+   */
+  
+  // read reader config file
+  var readerConfig = require(self.readerconfig);
+  
+  // data variables
+  var tagData = '';      // this stores the tag data
+  var tagBuffer = '';
+  var readData = '';     // this stores the read buffer
+  var start_offset = '00';
+  var offset = start_offset;
+  
+  // OBJECT CONSTANTS
+  // 3 bytes: flag, cmd and cmd_code
+  // command is composed of :
+  // '01' + length + '00','03','04', +flags+cmd+cmd_code
+  var FLAGS = {
+    inventory_single: ['24','14','01'],
+    inventory_multi:  ['04','14','01'],
+    read_tag:         ['20','18','23'],
+    write_block:      ['20','18','21'],
+    unlock_afi:       ['02','18','27'],
+    lock_afi:         ['00','18','27']
+  }
+
+  // INSTANCE DATA VARIABLES
+  self.readerState = 'paused'
+  self.selectedTag = '';
+  self.tagsInRange = [];  // tags in range from inventory
+                          // [{ id: <id>, data: { <object> } }]
+ 
+   // Create new serialport pointer
+  var reader = new SerialPort(self.portname , { 
+    baudRate: 115200,
+    dataBits: 8,
+    parity: 'none',
+    stopBits: 1,
+    flowControl: false,
+    buffersize: 1024
+  }, true); // this is the openImmediately flag [default is true]
+  
+  // expose reader functions
+  self.reader = reader;
+
+  /*****************
+   * EVENT LISTENERS
+   ******************/
+
+  /* 
+   * RFID READER
+   */
+  
+  reader.on('open',function() {
+    logger.log('debug', 'Port open');
+    
+    reader.on('initialize', initialize);
+    reader.on('initcodes', initcodes);
+    reader.on('scanloop', self.scanTagLoop);
+    reader.on('readtags', readTags);
+    reader.on('rfiddata', rfidData);
+    reader.on('readtagdata', readTagData);
+    // unregister tag if removed
+    reader.on('tagremoved', function() {
+      logger.log('debug', 'Tag removed');
+      if (self.websocket) {
+        socket.sendUTF("Tag removed");
+      }
+      tagData = '';
+    });
+    
+    // INVENTORY DONE, TAGS FOUND AND READ. TIME TO EMIT RESULTS 
+    // TODO: fixup this
+    //       consolidateTags fixes item counts
+    // start inventory if ISO15693 tag, else ignore
+    // all tags in self.tagsInRange should be read
+    reader.on('tagsfound', function( tags ) {
+      if (tags.length > 0) {                         // do nothing unless tags in range
+        tags = consolidateTags(tags);
+
+        logger.log('debug', "New tag(s) found!");
+        if (self.websocket) {
+          socket.sendUTF(tags);
+        }
+        self.emit('tagsInRange', tags);             // emit to calling external app!
+        if (self.socket) {
+          tags.forEach(function(tag) {
+            var response = { 
+              cmd: "READ",
+              status: tag.status,
+              id: tag.id,
+              data: tag.data
+            };
+            logger.log('debug', "resoponse to socket: "+response);
+            self.socket.write(JSON.stringify(response)+"\n");
+          })
+        }
+        // tagData = tags;                          // register new tag
+        if (self.tagtype == 'ISO15693') {           // if ISO15693 tag:
+       //   stopScan();
+          /*self.stopscan();                        //   stop scanning for tags*/
+        //  readTags(tags);                           //   start read tags content
+        }
+      } else {
+        logger.log('debug', "no tags in range...");
+      }
+      self.startscan(function(err) {
+        logger.log('debug', "Reactivated scan loop!");
+        //console.log("Reactivated scan loop!");
+      })
+    });
+
+    // send resulting tag to external app
+    // TODO: maybe kill this?  
+    reader.on('rfidresult', function(data) {
+      logger.log('debug', "Full tag received: "+data);
+      if (self.websocket) {
+        socket.sendUTF(data);       // send to websockets, skip first byte
+      }
+      self.emit('rfiddata', data);  // emit to external app
+    });
+    
+    reader.on('data', gotData);
+    
+    reader.emit('initialize', readerConfig.initialize['init']);
+  });
+  
+  // error
+  reader.on('error', function( msg ) {
+    console.log(msg);
+    logger.log('error', msg );
+  });
+  
+  // close
+  reader.on('close', function ( err ) {
+    logger.log('debug', 'port closed');
+  });
+
+  /*
+   * WEBSOCKET : only for testing?
+   */
+
   if(self.websocket) {                    // websocket boolean
     var wss = require("./wsserver.js");   // websocket server - pushes to connected clients
     var ws = require("./wsclient.js");    // websocket client - sends rfid result to server
@@ -66,7 +209,7 @@ Rfidgeek.prototype.init = function() {
   }
 
 /*
- * TCP Socket communication
+ * TCP SOCKET : Communication with hub
  */
 
   if(self.tcpsocket) {
@@ -144,138 +287,6 @@ Rfidgeek.prototype.init = function() {
     });
   }  
   
-  // read reader config file
-  var readerConfig = require(self.readerconfig);
-  
-  // data variables
-  var tagData = '';      // this stores the tag data
-  var tagBuffer = '';
-  var readData = '';     // this stores the read buffer
-  var start_offset = '00';
-  var offset = start_offset;
-  
-  // OBJECT CONSTANTS
-  // 3 bytes: flag, cmd and cmd_code
-  // command is composed of :
-  // '01' + length + '00','03','04', +flags+cmd+cmd_code
-  var FLAGS = {
-    inventory_single: ['24','14','01'],
-    inventory_multi:  ['04','14','01'],
-    read_tag:         ['20','18','23'],
-    write_block:      ['20','18','21'],
-    unlock_afi:       ['02','18','27'],
-    lock_afi:         ['00','18','27']
-  }
-
-  // public data variables
-  self.readerState = 'paused'
-  self.selectedTag = '';
-  self.tagsInRange = [];  // tags in range from inventory
-                          // [{ id: <id>, data: <string> }]
-  
-  // Create new serialport pointer
-  var reader = new SerialPort(self.portname , { 
-    baudRate: 115200,
-    dataBits: 8,
-    parity: 'none',
-    stopBits: 1,
-    flowControl: false,
-    buffersize: 1024
-  }, true); // this is the openImmediately flag [default is true]
-  
-  // expose reader functions
-  self.reader = reader;
-
-  /* Workflow:
-    Reader receives cmd:
-    * emit initialize event
-    * SCAN-ON: turns on the scan loop
-    * SCAN-OFF: turns off the scan loop
-    * ALARM-ON: activates AFI alarm
-    * ALARM-OFF: deactivates AFI alarm
-    * WRITE: writes n bytes to chip
-    * gets tag data, quits scan loop, activates read tag loop
-    * read tag loop completed, reactivated scan loop
-
-  */
-  
-  // EVENT LISTENERS
-  
-  reader.on('open',function() {
-    logger.log('debug', 'Port open');
-    
-    reader.on('initialize', initialize);
-    reader.on('initcodes', initcodes);
-    reader.on('scanloop', self.scanTagLoop);
-    reader.on('readtags', readTags);
-    reader.on('rfiddata', rfidData);
-    reader.on('readtagdata', readTagData);
-    // unregister tag if removed
-    reader.on('tagremoved', function() {
-      logger.log('debug', 'Tag removed');
-      if (self.websocket) {
-        socket.sendUTF("Tag removed");
-      }
-      tagData = '';
-    });
-    
-    // inventory done, tags found
-    // start readloop if ISO15693 tag, else ignore
-    // all tags in self.tagsInRange should be read
-    reader.on('tagsfound', function( tags ) {
-      if (tags.length > 0) {                     // do nothing unless new tag is found
-        logger.log('debug', "New tag(s) found!");
-        if (self.websocket) {
-          socket.sendUTF(tags);
-        }
-        self.emit('tagsInRange', tags);             // emit to calling external app!
-        if (self.socket) {
-          tags.forEach(function(tag) {
-            var response = { 
-              cmd: "SCAN-ON",
-              status: "TAGS-OK",
-              id: tag.id,
-              data: tag.data
-            };
-            logger.log('debug', "resoponse to socket: "+response);
-            self.socket.write(JSON.stringify(response)+"\n");
-          })
-        }
-        // tagData = tags;                          // register new tag
-        if (self.tagtype == 'ISO15693') {           // if ISO15693 tag:
-       //   stopScan();
-          /*self.stopscan();                        //   stop scanning for tags*/
-        //  readTags(tags);                           //   start read tags content
-        }
-      } else {
-        logger.log('debug', "no tags in range...");
-      }
-    });
-
-    // send resulting tag to external app
-    // TODO: maybe kill this?  
-    reader.on('rfidresult', function(data) {
-      logger.log('debug', "Full tag received: "+data);
-      if (self.websocket) {
-        socket.sendUTF(data);       // send to websockets, skip first byte
-      }
-      self.emit('rfiddata', data);  // emit to external app
-    });
-    
-    reader.on('data', gotData);
-    
-    reader.emit('initialize', readerConfig.initialize['init']);
-  });
-  
-  // error
-  reader.on('error', function( msg ) {
-    logger.log('error', msg );
-  });
-  
-  // close
-  reader.on('close', function ( err ) {
-    logger.log('debug', 'port closed');
-  });
   
   // PRIVATE FUNCTIONS
   
@@ -334,6 +345,34 @@ Rfidgeek.prototype.init = function() {
     return ("0"+(Number(d).toString(16))).slice(-2).toUpperCase()
   }
   
+  var consolidateTags = function(tags) {
+
+    // step 1: iterate tags into barcode object with count and totals
+    var barcodes = {};
+    tags.forEach(function(tag) { 
+      if( barcodes.propertyIsEnumerable(tag.data.barcode) ) {
+        barcodes[tag.data.barcode].count ++
+      } else {
+        barcodes[tag.data.barcode] = { count: 1, nitems: tag.data.nitems }
+      }
+    });
+
+    // step 2: loop barcodes and append ok == true on tags that 
+    //         have the correct number
+    idx = null;
+    for (idx in barcodes) {
+      if (barcodes[idx].count == barcodes[idx].nitems) {
+        tags.forEach(function(a) { 
+          if(a.data.barcode == idx) { a.status = "TAGS-OK" };
+        });
+      } else { 
+        tags.forEach(function(a) { 
+          if(a.data.barcode == idx) { a.status = "TAGS-MISSING" };
+        });
+      }
+    }
+    return tags;
+  }
   // TAG LOOP FUNCTIONS - do inventory check
   //var scanLoop = setInterval(function() { scanTagLoop(readerConfig.protocols[self.tagtype]) }, 1000 );
     
@@ -434,7 +473,7 @@ Rfidgeek.prototype.init = function() {
    */
   var gotData = function( data ) {
     data = String(data)
-    logger.log('debug', 'received: '+data);
+    logger.log('debug', 'received: '+data+' - readerstate: '+self.readerState);
     // Inventory state
     if (self.readerState == 'inventory') {
 
@@ -456,6 +495,8 @@ Rfidgeek.prototype.init = function() {
           tagBuffer = '';                 // empty tag buffer
           logger.log('debug', 'tags in range: '+self.tagsInRange);
           //reader.emit('tagsfound', self.tagsInRange);
+
+          // STOP INVENTORY SCAN, EMIT READ TAGS EVENT
           reader.emit('readtags', self.tagsInRange);
           self.stopscan(function(err) {
             if (err) { logger.log('error', 'error stopping scanning: '+err); }
@@ -467,12 +508,12 @@ Rfidgeek.prototype.init = function() {
       } else {
         tagBuffer += data;      
       }
-    }
+    } 
 
     // Read state
     // reads anything between [] as data from tag
     // needs to read one tag at a time
-    if (self.readerState == 'readtags') {
+    else if (self.readerState == 'readtags') {
       if(self.tagsInRange.length > 0) {
         var rfiddata = data.match(/\[00(.+)\]/);     // strip initial 00 response
         if (rfiddata) {
@@ -493,6 +534,7 @@ Rfidgeek.prototype.init = function() {
       //     logger.log('debug', "tag ID: "+id);
       //     reader.emit('tagfound', id);
       //   }
+    else { logger.log('debug', 'reading failed!'); }
   }
 }
 
