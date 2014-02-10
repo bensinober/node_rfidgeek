@@ -253,9 +253,6 @@ Rfidgeek.prototype.init = function() {
             socket.write('{"cmd": "SCAN-ON", "status": "OK"}\n');
           }          
         });
-        // return:
-        // {"cmd": "SCAN-ON", "status": "TAGS-OK", "barcode": "0123"}
-        // {"cmd": "SCAN-ON", "status": "TAGS-MISSING", "barcode": "0123"}
       });
       // disable scan
       socket.on('scanOFF', function(){
@@ -410,15 +407,12 @@ Rfidgeek.prototype.init = function() {
     // need to make an anonymous function loop with a 100ms for reader to be able to read all tags
     var i = 0;
     (function loopFn() {
+
       logger.log('debug', "sending readtagdata event, id: "+tags[i].id );
       reader.emit('readtagdata', tags[i].id );
       i++;
       if (i<tags.length) { setTimeout(loopFn, 100); }
     })();
-    //reader.removeListener('readtags', readTags);    
-    //reader.emit('rfidresult', tags);
-    // start new scanloop
-    //scanLoop = setInterval(function() { self.scanTagLoop(readerConfig.protocols[self.tagtype]) }, self.scaninterval );
   }
   
   // loop to read data from ISO15693 
@@ -461,10 +455,6 @@ Rfidgeek.prototype.init = function() {
       reader.emit('tagsfound', self.tagsInRange);
     }
 
-    //reader.removeListener('readtags', readTags);    
-    //reader.emit('rfidresult', str);
-    // start new scanloop
-    //scanLoop = setInterval(function() { self.scanTagLoop(readerConfig.protocols[self.tagtype]) }, self.scaninterval );
   }
   
   /*
@@ -481,6 +471,9 @@ Rfidgeek.prototype.init = function() {
       if (/\]D/.test(data)) {  
         tagBuffer += data;                                               // make sure last position is also counted    
         if (/\,[0-9A-F]{2}\]\r\n/.test(tagBuffer)) {                     // we have tags in range!
+          self.stopscan(function(err) {
+            if (err) { logger.log('error', 'error stopping scanning: '+err); }
+          });
           //var str = tagBuffer.replace(/\r\n/g, "");
           var tags=tagBuffer.match(/\[[0-9A-F]{16}\,[0-9A-F]{2}/g);      // tag id's are      [ID,POS]
           var conflicingtags=tagBuffer.match(/\[[0-9A-F]{16}\,z/g);      // conflict id's are [ID,z]   - ignored for now
@@ -497,10 +490,16 @@ Rfidgeek.prototype.init = function() {
           //reader.emit('tagsfound', self.tagsInRange);
 
           // STOP INVENTORY SCAN, EMIT READ TAGS EVENT
-          reader.emit('readtags', self.tagsInRange);
-          self.stopscan(function(err) {
-            if (err) { logger.log('error', 'error stopping scanning: '+err); }
-          });
+          // MISSING - not all tags present -- keep on reading tags...
+          if (!self.tagsInRange.every(function(some) { return some.status === "TAGS-OK" }) ) {
+            console.log("some tags missing");
+            reader.emit('readtags', self.tagsInRange);
+          // OK - all tags present -- restart inventory loop
+          } else {
+            self.startscan(function(err) {
+              if (err) { logger.log('error', 'error starting scanning: '+err); }
+            });
+          }
         } else {
           logger.log('debug', 'no tags in range!');
         }                            
