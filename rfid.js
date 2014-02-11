@@ -63,8 +63,7 @@ Rfidgeek.prototype.init = function() {
   var readerConfig = require(self.readerconfig);
   
   // data variables
-  var tagData = '';      // this stores the tag data
-  var tagBuffer = '';
+  //var tagData = '';      // this stores the tag data
   var readData = '';     // this stores the read buffer
   var start_offset = '00';
   var offset = start_offset;
@@ -124,12 +123,11 @@ Rfidgeek.prototype.init = function() {
       if (self.websocket) {
         socket.sendUTF("Tag removed");
       }
-      tagData = '';
+      //tagData = '';
     });
     
     // INVENTORY DONE, TAGS FOUND AND READ. TIME TO EMIT RESULTS 
-    // TODO: fixup this
-    //       consolidateTags fixes item counts
+    // consolidateTags fixes item counts
     // start inventory if ISO15693 tag, else ignore
     // all tags in self.tagsInRange should be read
     reader.on('tagsfound', function( tags ) {
@@ -191,8 +189,7 @@ Rfidgeek.prototype.init = function() {
   
   // error
   reader.on('error', function( msg ) {
-    console.log(msg);
-    logger.log('error', msg );
+    logger.log('error', "error opening reader: "+msg );
   });
   
   // close
@@ -240,11 +237,12 @@ Rfidgeek.prototype.init = function() {
       // disable all alarms within range
       socket.on('alarmOFF', function(){
         logger.log('debug', 'Deactivating alarms');
-        self.deactivateAFI(function(err) {
+        self.deactivateAFI(function(err, result) {
           if(err) {
             logger.log('error', err);
             socket.write('{"cmd": "ALARM-OFF", "status": "FAILED"}\n');
           } else {
+            console.log(result);
             socket.write('{"cmd": "ALARM-OFF", "status": "OK"}\n');
           }
         });
@@ -302,7 +300,6 @@ Rfidgeek.prototype.init = function() {
         (function loopCmd() {
           if (!endExpr.test(response)) {
             reader.once('data', function(data) {
-              console.log("still reading...");
               response += String(data);
               //setTimeout(function() { loopCmd(); }, 10);
               process.nextTick(function() { loopCmd(); });
@@ -409,7 +406,7 @@ Rfidgeek.prototype.init = function() {
     // run inventory check in intervals
     inventory(readerConfig.protocols[self.tagtype]['inventory'], function(err) {
       if (err) { 
-        logger.log('error', err); 
+        logger.log('error', "error: "+err); 
         logger.log('error', 'resetting scan loop!')
         self.stopscan(function(err) {
           if(err) {logger.log('error', 'SYNTAX TERROR'); }
@@ -432,9 +429,8 @@ Rfidgeek.prototype.init = function() {
   var inventory = function(cmd, callback) {
     issueCommand(cmd, /\]D/, function(err, response) {
       if (err) { 
-        logger.log('error', err);
+        logger.log('error', "Error: "+err);
       } else {
-        console.log(response);
         reader.emit('checkForTags', response, function(err) {
           if(err) { callback(err); }
           callback(null);
@@ -481,7 +477,7 @@ Rfidgeek.prototype.init = function() {
     var i = 0;
     (function loopFn() {
       logger.log('debug', "sending readtagdata event, id: "+tags[i].id );
-      cmd = ['01','14','00','03','04','18','20','23', tags[i].id, offset, self.blocks_to_read, '00', '00'].join('');
+      var cmd = ['01','14','00','03','04','18','20','23', tags[i].id, offset, self.blocks_to_read, '00', '00'].join('');
       logger.log('debug', "offset: "+offset+ " id: "+tags[i].id+" tagdata cmd: " + cmd );
       //process.nextTick(function() {
       issueCommand(cmd, /\]/, function(err, response) {
@@ -531,76 +527,33 @@ Rfidgeek.prototype.init = function() {
       reader.emit('tagsfound', self.tagsInRange);
     }
   }
-  
-  /*
-   * 'data' EVENT - fires on any data received from serialport, 
-   *              - thus needs to handle data according to self.readerState
-   */
-  var gotData = function( data ) {
-    data = String(data)
-    logger.log('debug', 'received: '+data+' - readerstate: '+self.readerState);
-    // Inventory state
-    if (self.readerState == 'inventory') {
 
-      // ']D' => end of inventory
-      if (/\]D/.test(data)) {  
-        tagBuffer += data;                                               // make sure last position is also counted    
-        if (/\,[0-9A-F]{2}\]\r\n/.test(tagBuffer)) {                     // we have tags in range!
-          //var str = tagBuffer.replace(/\r\n/g, "");
-          var tags=tagBuffer.match(/\[[0-9A-F]{16}\,[0-9A-F]{2}/g);      // tag id's are      [ID,POS]
-          var conflicingtags=tagBuffer.match(/\[[0-9A-F]{16}\,z/g);      // conflict id's are [ID,z]   - ignored for now
-          tags.forEach(function(tag) {
-            var id = tag.substr(1,16);
-            // append only tags that isn't already in array
-            if (!self.tagsInRange.some(function(some) { return some.id === id }) ) {
-              self.tagsInRange.push({id: id});
-            }
-          });
-          self.readerState = 'readtags';  // toggle readerstate
-          tagBuffer = '';                 // empty tag buffer
-          logger.log('debug', 'tags in range: '+self.tagsInRange);
-          //reader.emit('tagsfound', self.tagsInRange);
-
-          // STOP INVENTORY SCAN, EMIT READ TAGS EVENT
-          reader.emit('readtags', self.tagsInRange);
-          self.stopscan(function(err) {
-            if (err) { logger.log('error', 'error stopping scanning: '+err); }
-          });
-        } else {
-          logger.log('debug', 'no tags in range!');
-        }                            
-
-      } else {
-        tagBuffer += data;      
-      }
-    } 
-
-    // Read state
-    // reads anything between [] as data from tag
-    // needs to read one tag at a time
-    else if (self.readerState == 'readtags') {
-      if(self.tagsInRange.length > 0) {
-        var rfiddata = data.match(/\[00(.+)\]/);     // strip initial 00 response
-        if (rfiddata) {
-          logger.log('debug', "response data! "+rfiddata[1]);
-          reader.emit('rfiddata', rfiddata[1]);
-        }
-      }
-      else {
-        logger.log('debug', 'error reading tag!');
-      }
+  var deactivateAlarm = function(callback) {
+    if(self.tagsInRange.length > 0) {
+      self.stopscan(function(err) {
+        if (err) { logger.log('error', 'error stopping scanning: '+err); }
+      });
+      self.tagsInRange.forEach(function(tag) {
+        // 0113000304180227 365D5543000104E0 C20000 -> unlock
+        // 0113000304180227 365D5543000104E0 070000 -> lock
+        var cmd = ['01','13','00','03','04','18','02','27', tag.id, 'C2', '00', '00'].join(''); 
+        issueCommand(cmd, /\r\n/, function(err, result) {
+          if (err) { callback(err); }
+        });
+      });
+      callback();
     }
+  }  
 
-      // ANY OTHER PROXIMITY TAG
-      // if (/\[.+\]/.test(data)) {
-      //   var tag = data.match(/\[(.+)\]/);            // tag is anything between brackets
-      //   if (tag && tag[1]) {
-      //     id = reverseTag(tag[1]);
-      //     logger.log('debug', "tag ID: "+id);
-      //     reader.emit('tagfound', id);
-      //   }
-    else { logger.log('debug', 'reading failed!'); }
-  }
+//       // ANY OTHER PROXIMITY TAG
+//       // if (/\[.+\]/.test(data)) {
+//       //   var tag = data.match(/\[(.+)\]/);            // tag is anything between brackets
+//       //   if (tag && tag[1]) {
+//       //     id = reverseTag(tag[1]);
+//       //     logger.log('debug', "tag ID: "+id);
+//       //     reader.emit('tagfound', id);
+//       //   }
+
 }
 
 /*
@@ -632,7 +585,7 @@ Rfidgeek.prototype.writeISO15693 = function(tag, callback) {
 // this function deactivates AFI - cmd: 18, cmd_code: 27, data: c2
 Rfidgeek.prototype.deactivateAFI = function(callback) {
   var self = this;
-  callback();
+  callback(null, self.tagsInRange);
 }
 
 // this function deactivates AFI - cmd: 18, cmd_code: 27, data: 07

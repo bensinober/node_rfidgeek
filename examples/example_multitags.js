@@ -15,7 +15,7 @@ rfid.startscan();
 
 var Rfidgeek = require('../rfid.js');
 var rfid = new Rfidgeek({
-  debug: 'debug',
+  debug: 'error',
   tcpsocket: true,
   scaninterval: 500,
   tagtype: 'ISO15693',
@@ -23,5 +23,5 @@ var rfid = new Rfidgeek({
 });
 rfid.init();
 rfid.startscan(function(err) {
-  console.log(err);
+  if (err) {console.log(err); }
 })
