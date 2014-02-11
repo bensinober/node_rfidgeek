@@ -16,7 +16,8 @@ if (process.env.NODE_ENV=='test') {
   var hardware = MockedSerialPort.hardware;
   hardware.createPort('/dev/ttyUSB0');
 } else {
-  var SerialPort = require('serialport').SerialPort;
+  var serialport = require('serialport');
+  var SerialPort = serialport.SerialPort;
 }
 
 /*
@@ -93,8 +94,7 @@ Rfidgeek.prototype.init = function() {
     dataBits: 8,
     parity: 'none',
     stopBits: 1,
-    flowControl: false,
-    buffersize: 1024
+    flowControl: false
   }, true); // this is the openImmediately flag [default is true]
   
   // expose reader functions
@@ -114,7 +114,7 @@ Rfidgeek.prototype.init = function() {
     reader.on('initialize', initialize);
     reader.on('initcodes', initcodes);
     reader.on('scanloop', self.scanTagLoop);
-    reader.on('readtags', readTags);
+    reader.on('checkForTags', checkForTags);
     reader.on('rfiddata', rfidData);
     reader.on('readtagdata', readTagData);
     // unregister tag if removed
@@ -142,14 +142,19 @@ Rfidgeek.prototype.init = function() {
         self.emit('tagsInRange', tags);             // emit to calling external app!
         if (self.socket) {
           tags.forEach(function(tag) {
-            var response = { 
-              cmd: "READ",
-              status: tag.status,
-              id: tag.id,
-              data: tag.data
-            };
-            logger.log('debug', "resoponse to socket: "+response);
-            self.socket.write(JSON.stringify(response)+"\n");
+            if(!tag.validated) {
+              var response = { 
+                cmd: "READ",
+                status: tag.status,
+                id: tag.id,
+                data: tag.data
+              };
+              logger.log('debug', "response to socket: "+response);
+              self.socket.write(JSON.stringify(response)+"\n");
+              if (tag.status == "TAGS-OK") {
+                tag.validated = true;
+              }
+            }
           })
         }
         // tagData = tags;                          // register new tag
@@ -177,9 +182,10 @@ Rfidgeek.prototype.init = function() {
       self.emit('rfiddata', data);  // emit to external app
     });
     
-    reader.on('data', gotData);
-    
-    reader.emit('initialize', readerConfig.initialize['init']);
+    // EMIT INITIALIZE    
+    reader.emit('initialize', readerConfig.initialize['init'], function(err, result) {
+      if (err) { logger.log('error', 'error initializing: '+err); }
+    });
   });
   
   // error
@@ -253,9 +259,6 @@ Rfidgeek.prototype.init = function() {
             socket.write('{"cmd": "SCAN-ON", "status": "OK"}\n');
           }          
         });
-        // return:
-        // {"cmd": "SCAN-ON", "status": "TAGS-OK", "barcode": "0123"}
-        // {"cmd": "SCAN-ON", "status": "TAGS-MISSING", "barcode": "0123"}
       });
       // disable scan
       socket.on('scanOFF', function(){
@@ -289,39 +292,57 @@ Rfidgeek.prototype.init = function() {
   
   
   // PRIVATE FUNCTIONS
-  
-  // initialize reader and emit initcodes event
-  var initialize = function(cmd, callback) {
+  // command execution and result callback
+  // expects cmd, end of response regex & callback
+  var issueCommand = function(cmd, endExpr, callback) {
     reader.write(cmd, function(err) {
-      if (err){ callback(err)}
+      if(err){ callback(err); }
       else {
-        logger.log('debug', 'initialized reader...')
-        // initialized? emit initcodes
-        reader.emit('initcodes', readerConfig.protocols[self.tagtype]['initcodes']);
+        var response = '';
+        var readLoop = function(data) {
+          response += String(data);
+          if (endExpr.test(String(data))) {  // test string against endExpr 
+            reader.removeListener('data', readLoop);
+            callback(null, response);
+          }
+        }
+        reader.on('data', readLoop );
       }
     });
   }
-  
-  // run initcodes (with delay to ensure right execution)
-  var initcodes = function(cmd, callback) {
-    setTimeout(function () {
-      reader.write(cmd['register_write_request'], function(err) {
-        if (err){ callback(err); }
-        setTimeout(function () {
-          reader.write(cmd['agc_enable'], function(err) {
-            if (err){ callback(err); }
-            setTimeout(function () {
-              reader.write(cmd['am_input'], function(err) {
-                if (err){ callback(err); }
-                else { logger.log('debug', "ran initcodes!"); }
-              });
-            }, 10);
-          });
-        }, 10);
-      });
-    }, 10);
+
+  var initialize = function(cmd, callback) {
+    issueCommand(cmd, /\r\n/, function(err, response) {
+      if (err){ callback(err)}
+      else {
+        // initialized? emit initcodes
+        reader.emit('initcodes', readerConfig.protocols[self.tagtype]['initcodes'], /\r\n/, function(err) {
+          logger.log('debug', 'initialized reader');
+          callback(null);
+        });
+      }
+    });
   }
-  
+
+  var initcodes = function(cmd, endRegex, callback) {
+    issueCommand(cmd['register_write_request'], /\r\n/, function(err, result) {
+      if (err){ callback(err); }
+      logger.log('debug', result);
+      issueCommand(cmd['agc_enable'], /\r\n/, function(err, result) {
+        if (err) { callback(err); }
+        logger.log('debug', result);
+        issueCommand(cmd['am_input'], /\r\n/, function(err, result) {
+          if (err){ callback(err); }
+          else {
+            logger.log('debug', result); 
+            logger.log('debug', "ran initcodes!");
+            callback(null);
+          }
+        });
+      });
+    });
+  }
+
   // this function reverses a hex string to return tag ID
   var reverseTag = function(hex) {
     var str = [];
@@ -379,7 +400,16 @@ Rfidgeek.prototype.init = function() {
   self.scanTagLoop = function (){ 
     // run inventory check in intervals
     inventory(readerConfig.protocols[self.tagtype]['inventory'], function(err) {
-      if (err) { logger.log('error', err) }
+      if (err) { 
+        logger.log('error', err); 
+        logger.log('error', 'resetting scan loop!')
+        self.stopscan(function(err) {
+          if(err) {logger.log('error', 'SYNTAX TERROR'); }
+          self.startscan(function(err) {
+            if(err) {logger.log('error', 'SYNTAX TERROR2'); }
+          });
+        });
+      }
     });
   }
   
@@ -387,53 +417,84 @@ Rfidgeek.prototype.init = function() {
     clearInterval(scanLoop);
   }
   
-  // inventory command
+  // INVENTORY COMMAND
   // ISO15693:
   //   single_slot: 010B000304142401000000
   //   multi_slot:  010B000304140401000000
   var inventory = function(cmd, callback) {
-    reader.write(cmd, function(err) {
+    issueCommand(cmd, /\]D/, function(err, response) {
       if (err) { 
         logger.log('error', err);
-        callback(err)
-      }
-      else { 
-        logger.log('debug', 'ran inventory!') 
+      } else {
+        console.log(response);
+        reader.emit('checkForTags', response, function(err) {
+          if(err) { callback(err); }
+          callback(null);
+        });
       }
     });
   }
-  // END TAG LOOP FUNCTIONS
   
-  // READ TAG DATA
-  var readTags = function( tags, callback ) {
+  // END TAG LOOP FUNCTIONS
+  var checkForTags = function(inventory, callback) {
+    var tagregex      = /\[([0-9A-F]{16})\,[0-9A-F]{2}/g;  // tag id's are      [ID,POS]
+    var conflictregex = /\[([0-9A-F]{16})\,z/g;            // conflict id's are [ID,z]   - ignored for now
+    var tags = []
+    var match;
+
+    while(match = tagregex.exec(inventory) ) {
+      tags.push(match[1]);
+    }
     
-    // need to make an anonymous function loop with a 100ms for reader to be able to read all tags
+    if(tags.length > 0) {
+      self.stopscan(function(err) {
+        if (err) { logger.log('error', 'error stopping scanning: '+err); }
+      });
+      tags.forEach(function(tag) {
+        // append only tags that isn't already in array
+        if (!self.tagsInRange.some(function(some) { return some.id === tag }) ) {
+          self.tagsInRange.push({id: tag});
+        }
+      });
+      //self.readerState = 'readtags';  // toggle readerstate
+      logger.log('debug', 'tags in range: '+self.tagsInRange);
+      reader.emit('readtagdata', self.tagsInRange, function(err) {
+        callback(err);
+      });
+    } else {
+      logger.log('debug', 'no tags in range!');
+    }
+  }
+    
+
+  // READ TAG DATA
+  var readTagData = function( tags, callback ) {
+    var offset = '00';
     var i = 0;
     (function loopFn() {
       logger.log('debug', "sending readtagdata event, id: "+tags[i].id );
-      reader.emit('readtagdata', tags[i].id );
+      cmd = ['01','14','00','03','04','18','20','23', tags[i].id, offset, self.blocks_to_read, '00', '00'].join('');
+      logger.log('debug', "offset: "+offset+ " id: "+tags[i].id+" tagdata cmd: " + cmd );
+      //process.nextTick(function() {
+      issueCommand(cmd, /\]/, function(err, response) {
+        if(err) { callback(err) }
+        if(/\[z\]/.test(response) || /\[\]/.test(response) ) {
+          callback("conflict in tags!");
+        }
+        logger.log('debug', "tagread response: "+response); 
+        var rfiddata = response.match(/\[00(.+)\]/);     // strip initial 00 response
+        if (rfiddata) {
+          logger.log('debug', "response data! "+rfiddata[1]);
+          reader.emit('rfiddata', rfiddata[1]);
+        } else {
+          callback("some unknown error");
+        }
+      });
       i++;
       if (i<tags.length) { setTimeout(loopFn, 100); }
     })();
-    //reader.removeListener('readtags', readTags);    
-    //reader.emit('rfidresult', tags);
-    // start new scanloop
-    //scanLoop = setInterval(function() { self.scanTagLoop(readerConfig.protocols[self.tagtype]) }, self.scaninterval );
+    callback(null);
   }
-  
-  // loop to read data from ISO15693 
-  var readTagData = function( id, callback ) {
-    var offset = '00';
-    // cmd = ['01','0C','00','03','04','18','00','23', dec2hex(offset), dec2hex(self.bytes_per_read), '00', '00'].join('');
-    cmd = ['01','14','00','03','04','18','20','23', id, offset, self.blocks_to_read, '00', '00'].join('');
-    logger.log('debug', "offset: "+offset+ " id: "+id+" tagdata cmd: " + cmd );
-    process.nextTick(function() {
-      reader.write(cmd, function(err) {
-        if(err) { throw new Error (err) }
-      });
-    });
-  }
-
   /*
    * 'rfiddata' EVENT - fires when tag data is read
    *                  - hopefully tags come in right order as there is no async way to ensure
@@ -461,70 +522,13 @@ Rfidgeek.prototype.init = function() {
       reader.emit('tagsfound', self.tagsInRange);
     }
 
-    //reader.removeListener('readtags', readTags);    
-    //reader.emit('rfidresult', str);
-    // start new scanloop
-    //scanLoop = setInterval(function() { self.scanTagLoop(readerConfig.protocols[self.tagtype]) }, self.scaninterval );
   }
   
   /*
    * 'data' EVENT - fires on any data received from serialport, 
    *              - thus needs to handle data according to self.readerState
    */
-  var gotData = function( data ) {
-    data = String(data)
-    logger.log('debug', 'received: '+data+' - readerstate: '+self.readerState);
-    // Inventory state
-    if (self.readerState == 'inventory') {
 
-      // ']D' => end of inventory
-      if (/\]D/.test(data)) {  
-        tagBuffer += data;                                               // make sure last position is also counted    
-        if (/\,[0-9A-F]{2}\]\r\n/.test(tagBuffer)) {                     // we have tags in range!
-          //var str = tagBuffer.replace(/\r\n/g, "");
-          var tags=tagBuffer.match(/\[[0-9A-F]{16}\,[0-9A-F]{2}/g);      // tag id's are      [ID,POS]
-          var conflicingtags=tagBuffer.match(/\[[0-9A-F]{16}\,z/g);      // conflict id's are [ID,z]   - ignored for now
-          tags.forEach(function(tag) {
-            var id = tag.substr(1,16);
-            // append only tags that isn't already in array
-            if (!self.tagsInRange.some(function(some) { return some.id === id }) ) {
-              self.tagsInRange.push({id: id});
-            }
-          });
-          self.readerState = 'readtags';  // toggle readerstate
-          tagBuffer = '';                 // empty tag buffer
-          logger.log('debug', 'tags in range: '+self.tagsInRange);
-          //reader.emit('tagsfound', self.tagsInRange);
-
-          // STOP INVENTORY SCAN, EMIT READ TAGS EVENT
-          reader.emit('readtags', self.tagsInRange);
-          self.stopscan(function(err) {
-            if (err) { logger.log('error', 'error stopping scanning: '+err); }
-          });
-        } else {
-          logger.log('debug', 'no tags in range!');
-        }                            
-
-      } else {
-        tagBuffer += data;      
-      }
-    } 
-
-    // Read state
-    // reads anything between [] as data from tag
-    // needs to read one tag at a time
-    else if (self.readerState == 'readtags') {
-      if(self.tagsInRange.length > 0) {
-        var rfiddata = data.match(/\[00(.+)\]/);     // strip initial 00 response
-        if (rfiddata) {
-          logger.log('debug', "response data! "+rfiddata[1]);
-          reader.emit('rfiddata', rfiddata[1]);
-        }
-      }
-      else {
-        logger.log('debug', 'error reading tag!');
-      }
-    }
 
       // ANY OTHER PROXIMITY TAG
       // if (/\[.+\]/.test(data)) {
@@ -534,8 +538,6 @@ Rfidgeek.prototype.init = function() {
       //     logger.log('debug', "tag ID: "+id);
       //     reader.emit('tagfound', id);
       //   }
-    else { logger.log('debug', 'reading failed!'); }
-  }
 }
 
 /*

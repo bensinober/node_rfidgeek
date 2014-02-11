@@ -17,7 +17,7 @@ var Rfidgeek = require('../rfid.js');
 var rfid = new Rfidgeek({
   debug: 'debug',
   tcpsocket: true,
-  scaninterval: 500,
+  scaninterval: 800,
   tagtype: 'ISO15693',
   blocks_to_read: '08' // 8+1 blocks * 4 bytes = 36 bytes
 });
