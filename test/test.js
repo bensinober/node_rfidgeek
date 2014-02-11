@@ -43,6 +43,11 @@ describe('Logger', function() {
   it('should instantiate a logger, but with no logging as default', function() {
     expect(logger.debugLevel).to.be('none');
   });
+  it('logger level should be configurable', function() {
+    var rfid = new com({debug: 'error'});
+    expect(logger.debugLevel).to.be('error');
+    rfid.init();
+  });
   it('should throw error on opening reader to logger', function(done) {
     setTimeout(function () {
       expect(spy.calledWith('something bad'));
@@ -93,7 +98,7 @@ describe('tagtypes', function() {
 
 describe('ISO15693', function() {
   before( function(){ 
-    dummydata = '[0123456789ABCDEF,10]\r\n';
+    dummydata = '[0123456789ABCDEF,10]';
     endOfInventory = '[,40]D\r\n';
     rfid = new com({tagtype: 'ISO15693'});
   });
