@@ -8,14 +8,18 @@
  * {"cmd": "WRITE", "data", "<bytes>"}
  */
 
-var net  = require('net'),
-    PORT = process.argv[2] || 4444//6767 //4444, //6767,
-    HOST = process.argv[3] || 'localhost' //10.172.2.202';
+var net  = require('net');
 
-var tcpclient = net.connect({port: PORT, host: HOST}, function(){
+function TCPClient(config) {
+  var self = this;
+  PORT = config.port || 4444//6767 //4444, //6767,
+  HOST = config.host || 'localhost' //10.172.2.202';
+
+
+  self.client = net.connect({port: PORT, host: HOST}, function(){
   var responseString = '';
-  module.exports.emit('ready', tcpclient);    // emit ready to allow rfidgeek to grab tcpclient
-  tcpclient.on('data', function(data) {
+  //module.exports.emit('ready', self.client);    // emit ready to allow rfidgeek to grab self.client
+  self.client.on('data', function(data) {
     responseString += data;
     // newline on single line is end of string
     //if (/\n/.test(data)) { 
@@ -25,19 +29,19 @@ var tcpclient = net.connect({port: PORT, host: HOST}, function(){
         console.log(json);
         switch(json.cmd) {
           case 'ALARM-ON':
-            tcpclient.emit("alarmON");
+            self.client.emit("alarmON");
             break;
           case 'ALARM-OFF':
-            tcpclient.emit("alarmOFF");
+            self.client.emit("alarmOFF");
             break;
           case 'SCAN-ON':
-            tcpclient.emit("scanON");
+            self.client.emit("scanON");
             break;
           case 'SCAN-OFF':
-            tcpclient.emit("scanOFF");
+            self.client.emit("scanOFF");
             break;
           case 'WRITE':
-            tcpclient.emit("writeDATA", json.id, json.data);
+            self.client.emit("writeDATA", json.id, json.data);
             break;
           default:
             console.log("unknown command: "+JSON.stringify(json));
@@ -48,14 +52,16 @@ var tcpclient = net.connect({port: PORT, host: HOST}, function(){
     //}
   });
 
-  tcpclient.on('error', function(err) {
+  self.client.on('error', function(err) {
     console.log('error:', err.message);
   });
 
-  tcpclient.on('end', function() {
+  self.client.on('end', function() {
     console.log('server disconnect');
   });
 
 });
-tcpclient.emit('ready', tcpclient);
-module.exports = tcpclient;
+self.client.emit('ready', self.client);
+//module.exports = self.client;
+}
+module.exports = TCPClient;

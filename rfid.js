@@ -217,7 +217,9 @@ Rfidgeek.prototype.init = function() {
  */
 
   if(self.tcpsocket) {
-    var tcpclient = require("./tcpclient.js");
+    //var tcpclient = require("./tcpclient.js");
+    var TCPClient = require("./tcpclient.js");
+    var tcpclient = new TCPClient(self.tcpsocket).client;
     tcpclient.on('ready', function(conn) {
       var socket = conn;
       self.socket = socket;  // expose socket
