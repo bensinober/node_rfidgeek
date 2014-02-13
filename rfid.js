@@ -253,9 +253,9 @@ Rfidgeek.prototype.init = function() {
         self.startscan(function(err) {
           if(err) {
             logger.log('error', err);
-            socket.write('{"cmd": "SCAN-ON", "status": "FAILED"}\n');
+            socket.write('{"cmd": "SCAN-ON", "status": "FAILED"}');
           } else {
-            socket.write('{"cmd": "SCAN-ON", "status": "OK"}\n');
+            socket.write('{"cmd": "SCAN-ON", "status": "OK"}');
           }          
         });
       });

@@ -23,8 +23,13 @@ var server = net.createServer(function(socket) { //'connection' listener
   socket.on('end', function() {
     console.log('client disconnected');
   });
-  socket.write('{"hello":"msg"}');
-  socket.write('\n');
+  socket.write('{"hello":"msg"}\n');
+  
+  // capture from console and send to socket
+  process.stdin.on('data', function(chunk) {
+    socket.write(String(chunk));
+  });
+
 });
 
 server.listen(4444, function() { //'listening' listener

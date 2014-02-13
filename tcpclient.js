@@ -9,8 +9,8 @@
  */
 
 var net  = require('net'),
-    PORT = process.argv[2] || 6767 //4444, //6767,
-    HOST = process.argv[3] || '10.172.2.202';
+    PORT = process.argv[2] || 4444//6767 //4444, //6767,
+    HOST = process.argv[3] || 'localhost' //10.172.2.202';
 
 var tcpclient = net.connect({port: PORT, host: HOST}, function(){
   var responseString = '';
@@ -18,28 +18,34 @@ var tcpclient = net.connect({port: PORT, host: HOST}, function(){
   tcpclient.on('data', function(data) {
     responseString += data;
     // newline on single line is end of string
-    if (/\n/.test(data)) { 
-      var json = JSON.parse(responseString);
-      responseString = '';
-      console.log(json);
-      switch(json.cmd) {
-        case 'ALARM-ON':
-          tcpclient.emit("alarmON");
-          break;
-        case 'ALARM-OFF':
-          tcpclient.emit("alarmOFF");
-          break;
-        case 'SCAN-ON':
-          tcpclient.emit("scanON");
-          break;
-        case 'SCAN-OFF':
-          tcpclient.emit("scanOFF");
-          break;
-        case 'WRITE':
-          tcpclient.emit("writeDATA", json.id, json.data);
-          break;
-      } 
-    }
+    //if (/\n/.test(data)) { 
+      try {
+        var json = JSON.parse(responseString);
+        responseString = '';
+        console.log(json);
+        switch(json.cmd) {
+          case 'ALARM-ON':
+            tcpclient.emit("alarmON");
+            break;
+          case 'ALARM-OFF':
+            tcpclient.emit("alarmOFF");
+            break;
+          case 'SCAN-ON':
+            tcpclient.emit("scanON");
+            break;
+          case 'SCAN-OFF':
+            tcpclient.emit("scanOFF");
+            break;
+          case 'WRITE':
+            tcpclient.emit("writeDATA", json.id, json.data);
+            break;
+          default:
+            console.log("unknown command: "+JSON.stringify(json));
+        } 
+      } catch (e) {
+        console.log(e);
+      }
+    //}
   });
 
   tcpclient.on('error', function(err) {
