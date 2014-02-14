@@ -18,7 +18,7 @@ function TCPClient(config) {
 
   self.client = net.connect({port: PORT, host: HOST}, function(){
   var responseString = '';
-  //module.exports.emit('ready', self.client);    // emit ready to allow rfidgeek to grab self.client
+  self.client.emit('ready', self.client);    // emit ready to allow rfidgeek to grab self.client
   self.client.on('data', function(data) {
     responseString += data;
     // newline on single line is end of string

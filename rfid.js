@@ -156,7 +156,6 @@ Rfidgeek.prototype.init = function() {
             }
           })
         }
-        // tagData = tags;                          // register new tag
         if (self.tagtype == 'ISO15693') {           // if ISO15693 tag:
        //   stopScan();
           /*self.stopscan();                        //   stop scanning for tags*/
@@ -165,10 +164,11 @@ Rfidgeek.prototype.init = function() {
       } else {
         logger.log('debug', "no tags in range...");
       }
-      self.startscan(function(err) {
+      // HERE! cannot reactivate scan loop
+      /*self.startscan(function(err) {
         logger.log('debug', "Reactivated scan loop!");
         //console.log("Reactivated scan loop!");
-      })
+      });*/
     });
 
     // send resulting tag to external app
@@ -226,10 +226,10 @@ Rfidgeek.prototype.init = function() {
       logger.log('debug', 'Connected to socket');
         // enable all alarms within range
       conn.on('alarmON', function(){
-        logger.log('debug', 'Activating alarm');
-        self.activateAFI(function(err) {
+        logger.log('debug', 'Activating alarms');
+        self.activateAFI(function(err, results) {
           if(err) {
-            logger.log('error', err);
+            logger.log('debug', result);
             socket.write('{"cmd": "ALARM-ON", "status": "FAILED"}\n');
           } else {
             socket.write('{"cmd": "ALARM-ON", "status": "OK"}\n');
@@ -244,7 +244,7 @@ Rfidgeek.prototype.init = function() {
             logger.log('error', err);
             socket.write('{"cmd": "ALARM-OFF", "status": "FAILED"}\n');
           } else {
-            console.log(result);
+            logger.log('debug', result);
             socket.write('{"cmd": "ALARM-OFF", "status": "OK"}\n');
           }
         });
@@ -453,9 +453,9 @@ Rfidgeek.prototype.init = function() {
     }
     
     if(tags.length > 0) {
-      self.stopscan(function(err) {
-        if (err) { logger.log('error', 'error stopping scanning: '+err); }
-      });
+      //self.stopscan(function(err) {
+      //  if (err) { logger.log('error', 'error stopping scanning: '+err); }
+      //});
       tags.forEach(function(tag) {
         // append only tags that isn't already in array
         if (!self.tagsInRange.some(function(some) { return some.id === tag }) ) {
@@ -481,7 +481,6 @@ Rfidgeek.prototype.init = function() {
       logger.log('debug', "sending readtagdata event, id: "+tags[i].id );
       var cmd = ['01','14','00','03','04','18','20','23', tags[i].id, offset, self.blocks_to_read, '00', '00'].join('');
       logger.log('debug', "offset: "+offset+ " id: "+tags[i].id+" tagdata cmd: " + cmd );
-      //process.nextTick(function() {
       issueCommand(cmd, /\]/, function(err, response) {
         if(err) { callback(err) }
         if(/\[z\]/.test(response) || /\[\]/.test(response) ) {
@@ -530,22 +529,44 @@ Rfidgeek.prototype.init = function() {
     }
   }
 
-  var deactivateAlarm = function(callback) {
-    if(self.tagsInRange.length > 0) {
-      self.stopscan(function(err) {
-        if (err) { logger.log('error', 'error stopping scanning: '+err); }
+  self.deactivateAlarm = function(tag, done) {
+    self.stopscan(function(err) {
+      if (err) { done(err); }
+      
+      // 0113000304182027 365D5543000104E0 C20000 -> unlock
+      // 0113000304182027 365D5543000104E0 070000 -> lock
+      // 010C000304141401C2000000 -> inventory, scan for tags with C2
+      // 010C00030414140107000000 -> inventory, scan for tags with 07
+      var cmd = ['01','13','00','03','04','18','20','27', tag.id, 'C2', '00', '00'].join(''); 
+      issueCommand(cmd, /\]/, function(err, response) {
+        if (err) { done(err); }
+        if (/\[00\]/.test(response)) {
+          logger.log('debug', 'deactivated alarm OK: '+tag.id+' response: '+response);
+          done();
+        } else {
+          logger.log('error', 'failed to deactivate alarm: '+tag.id+' - response: '+response);
+          done("failure");
+        }
       });
-      self.tagsInRange.forEach(function(tag) {
-        // 0113000304180227 365D5543000104E0 C20000 -> unlock
-        // 0113000304180227 365D5543000104E0 070000 -> lock
-        var cmd = ['01','13','00','03','04','18','02','27', tag.id, 'C2', '00', '00'].join(''); 
-        issueCommand(cmd, /\r\n/, function(err, result) {
-          if (err) { callback(err); }
-        });
+    });
+  }
+
+  self.activateAlarm = function(tag, done) {
+    self.stopscan(function(err) {
+      if (err) { done(err); }
+      var cmd = ['01','13','00','03','04','18','20','27', tag.id, '07', '00', '00'].join(''); 
+      issueCommand(cmd, /\]/, function(err, response) {
+        if (err) { done(err); }
+        if (/\[00\]/.test(response)) {
+          logger.log('debug', 'activated alarm OK: '+tag.id+' response: '+response);
+          done();
+        } else {
+          logger.log('error', 'failed to activate alarm: '+tag.id+' - response: '+response);
+          done("failure");
+        }
       });
-      callback();
-    }
-  }  
+    });
+  }
 
 //       // ANY OTHER PROXIMITY TAG
 //       // if (/\[.+\]/.test(data)) {
@@ -584,18 +605,31 @@ Rfidgeek.prototype.writeISO15693 = function(tag, callback) {
   var self = this;
 }
 
-// this function deactivates AFI - cmd: 18, cmd_code: 27, data: c2
+// this function deactivates AFI - cmd: 18, cmd_code: 27, data: C2
 Rfidgeek.prototype.deactivateAFI = function(callback) {
   var self = this;
-  callback(null, self.tagsInRange);
+  if(self.tagsInRange.length > 0) {
+    self.tagsInRange.forEach(function(tag) {
+      self.deactivateAlarm(tag, function(err) {
+        if(err) {callback(err)};
+      });
+    });
+    callback();
+  }
 }
 
-// this function deactivates AFI - cmd: 18, cmd_code: 27, data: 07
+// this function activates AFI - cmd: 18, cmd_code: 27, data: 07
 Rfidgeek.prototype.activateAFI = function(callback) {
   var self = this;
-  callback("Could not activate!");
+  if(self.tagsInRange.length > 0) {
+    self.tagsInRange.forEach(function(tag) {
+      self.activateAlarm(tag, function(err) {
+        if(err) {callback(err)};
+      });
+    });
+    callback();
+  }
 }
-
 
 
 module.exports = Rfidgeek  
