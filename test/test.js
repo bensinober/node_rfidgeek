@@ -98,15 +98,16 @@ describe('tagtypes', function() {
 
 describe('ISO15693', function() {
   before( function(){ 
-    dummydata = '[0123456789ABCDEF,10]';
-    endOfInventory = '[,40]D\r\n';
+    dummydata = '[0123456789ABCDEF,10][,40]D\r\n';
     rfid = new com({tagtype: 'ISO15693'});
   });
   it('found tag should add to tags in range', function(done) {
     setTimeout(function () {
       rfid.readerState = 'inventory';
-      rfid.reader.emit('data', dummydata);
-      rfid.reader.emit('data', endOfInventory);
+      rfid.emit('checkForTags', dummydata, function(err) {
+        if(err) { done(err); }
+      });
+      console.log(rfid.tagsInRange)
       assert(rfid.tagsInRange.length > 0);
       assert(rfid.tagsInRange[0].id == '0123456789ABCDEF');
       done();

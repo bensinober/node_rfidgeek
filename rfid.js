@@ -227,7 +227,7 @@ Rfidgeek.prototype.init = function() {
         // enable all alarms within range
       conn.on('alarmON', function(){
         logger.log('debug', 'Activating alarms');
-        self.activateAFI(function(err, results) {
+        self.activateAFI(function(err, result) {
           if(err) {
             logger.log('debug', result);
             socket.write('{"cmd": "ALARM-ON", "status": "FAILED"}\n');
@@ -279,12 +279,12 @@ Rfidgeek.prototype.init = function() {
         // return:
         // {"cmd": "WRITE", "status": "OK|FAILED"}
         logger.log('debug', 'Writing to tag: '+id+', data: '+data);
-        self.writeISO15693(function(id, data, err) {
+        self.writeISO15693(id, data, function(err) {
           if(err) {
             logger.log('error', err);
-            socket.write('{"cmd": "SCAN-OFF", "status": "FAILED"}\n');
+            socket.write('{"cmd": "WRITE", "status": "FAILED"}\n');
           } else {
-            socket.write('{"cmd": "SCAN-OFF", "status": "OK"}\n');
+            socket.write('{"cmd": "WRITE", "status": "OK"}\n');
           }          
         });
       });  
@@ -568,6 +568,48 @@ Rfidgeek.prototype.init = function() {
     });
   }
 
+  self.writeTag = function(id, data, done) {
+    // tag written as chunks in block increments of 1 (=4bytes)
+    // 0117000304182021 67F4C712500104E0 00 11010131 0000 ['11', '01', '01', '31']
+    self.stopscan(function(err) {
+      if (err) { done(err); }
+      if (/[^0-9A-F]/.test(data)) {
+        console.error("error", "Sent invalid bytes: "+data);
+        done("Invalid bytes sent!");
+      }
+      var offset = 0;
+      var bytes  = String(data).match(/.{1,2}/g);
+      var chunks = bytes.length / 4;
+
+      (function loopWrite() {
+        var str = bytes.slice(offset*4,offset*4+4).join('');
+        logger.log('debug', "writing to tag: "+str+" offset: "+offset+" id: "+id );
+        var cmd = ['01','17','00','03','04','18','20','21', id, dec2hex(offset), str, '00', '00'].join(''); 
+        issueCommand(cmd, /\]/, function(err, response) {
+          if(err) { done(err) }
+          if(/\[z\]/.test(response) || /\[\]/.test(response) ) {
+            logger.log('error', 'failed to write to tag: '+id+' - response: '+response);
+            issueCommand(cmd, /\]/, function(err, response) { 
+              if(err) { done(err) }
+              if(/\[z\]/.test(response) || /\[\]/.test(response) ) {
+                logger.log('error', 'retry failed to write to tag: '+id+' - response: '+response);
+                done("error writing...giving up!");
+              }
+            });
+          }
+          logger.log('debug', 'written data OK: '+str+' response: '+response);
+        });
+        offset++;
+        if (offset<chunks) { 
+          setTimeout(function() { loopWrite() }, 300); 
+        } else {
+          done();
+        }
+      })();
+
+    });
+  }
+
 //       // ANY OTHER PROXIMITY TAG
 //       // if (/\[.+\]/.test(data)) {
 //       //   var tag = data.match(/\[(.+)\]/);            // tag is anything between brackets
@@ -601,8 +643,12 @@ Rfidgeek.prototype.stopscan = function(callback) {
 }
 
 // this function writes data to ISO15693 chip
-Rfidgeek.prototype.writeISO15693 = function(tag, callback) {
+Rfidgeek.prototype.writeISO15693 = function(tag, data, callback) {
   var self = this;
+  self.writeTag(tag, String(data), function(err) {
+    if(err) {callback(err)};
+  });
+  callback();
 }
 
 // this function deactivates AFI - cmd: 18, cmd_code: 27, data: C2
