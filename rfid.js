@@ -9,6 +9,7 @@
 
 var sys = require('sys');
 var events = require('events');
+var crc = require('./crc.js');
 // Mock serialport if in test mode
 if (process.env.NODE_ENV=='test') {
   var MockedSerialPort = require('./node_modules/serialport/test_mocks/linux-hardware.js');
@@ -68,19 +69,6 @@ Rfidgeek.prototype.init = function() {
   var start_offset = '00';
   var offset = start_offset;
   
-  // OBJECT CONSTANTS
-  // 3 bytes: flag, cmd and cmd_code
-  // command is composed of :
-  // '01' + length + '00','03','04', +flags+cmd+cmd_code
-  var FLAGS = {
-    inventory_single: ['24','14','01'],
-    inventory_multi:  ['04','14','01'],
-    read_tag:         ['20','18','23'],
-    write_block:      ['20','18','21'],
-    unlock_afi:       ['02','18','27'],
-    lock_afi:         ['00','18','27']
-  }
-
   // INSTANCE DATA VARIABLES
   self.readerState = 'paused'
   self.selectedTag = '';
@@ -148,8 +136,9 @@ Rfidgeek.prototype.init = function() {
                 id: tag.id,
                 data: tag.data
               };
-              logger.log('debug', "response to socket: "+response);
-              self.socket.write(JSON.stringify(response)+"\n");
+              var jsonresponse = JSON.stringify(response);
+              logger.log('debug', "response to socket: "+jsonresponse);
+              self.socket.write(jsonresponse+"\n");
               if (tag.status == "TAGS-OK") {
                 tag.validated = true;
               }
@@ -255,9 +244,9 @@ Rfidgeek.prototype.init = function() {
         self.startscan(function(err) {
           if(err) {
             logger.log('error', err);
-            socket.write('{"cmd": "SCAN-ON", "status": "FAILED"}');
+            socket.write('{"cmd": "SCAN-ON", "status": "FAILED"}\n');
           } else {
-            socket.write('{"cmd": "SCAN-ON", "status": "OK"}');
+            socket.write('{"cmd": "SCAN-ON", "status": "OK"}\n');
           }          
         });
       });
@@ -371,6 +360,17 @@ Rfidgeek.prototype.init = function() {
   // this function turns a decimal number to hex
   var dec2hex = function(d) {
     return ("0"+(Number(d).toString(16))).slice(-2).toUpperCase()
+  }
+
+  // calculate CRC for writing tags, input Array of bytes
+  var calculateCRC = function(bytes) {
+    var part1 = bytes.slice(0,19),
+        part2 = bytes.slice(21,32),
+        part3 = ['00','00'];
+    
+    var hexdata = hex2ascii(part1.concat(part2,part3).join(''));
+    var c = crc.crc16CCITT(hexdata).toString(16).match(/.{1,2}/g).reverse();
+    return part1.concat(c,part2)
   }
   
   var consolidateTags = function(tags) {
@@ -569,20 +569,29 @@ Rfidgeek.prototype.init = function() {
   }
 
   self.writeTag = function(id, data, done) {
+    // TODO: Some more error handling
     // tag written as chunks in block increments of 1 (=4bytes)
     // 0117000304182021 67F4C712500104E0 00 11010131 0000 ['11', '01', '01', '31']
     self.stopscan(function(err) {
       if (err) { done(err); }
       if (/[^0-9A-F]/.test(data)) {
-        console.error("error", "Sent invalid bytes: "+data);
+        logger.log.error("error", "Sent invalid bytes: "+data);
         done("Invalid bytes sent!");
       }
       var offset = 0;
       var bytes  = String(data).match(/.{1,2}/g);
+      if (bytes.length < 32) { 
+        logger.log("error", "invalid length: "+bytes.length+" must be above 32!");
+        done("invalid length");
+      }
+
+      // calculate CRC and replace
+      var updatedCRC = calculateCRC(bytes);
+
       var chunks = bytes.length / 4;
 
       (function loopWrite() {
-        var str = bytes.slice(offset*4,offset*4+4).join('');
+        var str = updatedCRC.slice(offset*4,offset*4+4).join('');
         logger.log('debug', "writing to tag: "+str+" offset: "+offset+" id: "+id );
         var cmd = ['01','17','00','03','04','18','20','21', id, dec2hex(offset), str, '00', '00'].join(''); 
         issueCommand(cmd, /\]/, function(err, response) {

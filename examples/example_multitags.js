@@ -16,7 +16,7 @@ rfid.startscan();
 var Rfidgeek = require('../rfid.js');
 var rfid = new Rfidgeek({
   debug: 'debug',
-  tcpsocket: { port: 4444, host: 'localhost'},
+  tcpsocket: { port: 6767, host: 'localhost'},
   scaninterval: 500,
   tagtype: 'ISO15693',
   blocks_to_read: '08' // 8+1 blocks * 4 bytes = 36 bytes
