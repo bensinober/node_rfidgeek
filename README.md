@@ -11,53 +11,84 @@ This reader supports the following tags:
 
 ## Using
 
-Uses event emitters for passing tag and content, which can be captured by
-instantiating an Rfidgeek object thus:
+Uses event emitters for passing tag and content, and can be controlled by nodejs,
+or externally via TCP Socket or Websocket.
 
 ```
-var Rfidgeek = require('rfidgeek'); 
-var rfid = new Rfidgeek();
+var rfid = require('rfidgeek'); 
 ```
 
-To initialize reader:
+## Configuration
 
-    rfid.init();
-
-Then to activate the scan loop:
-
-    rfid.start();
-
-And to deactivate:
-
-    rfid.stop();
-
-
-Alternatively, the controller can be passed to an included websocket server, which in turn broadcasts to any websocket client connected at port 8080. 
+rfid.init() takes optional parameters (defaults in parantheses):
 
 
 ```
-var Rfidgeek = require('rfidgeek'); 
-var rfid = new Rfidgeek({
-  websocket: true
-});
-```
-
-For now uses the `tagfound` and `rfiddata` events.
-
-The full range of options (including defaults in parantheses) are:
-
-```
-debug:     ('none')                      // show debug information, possible values: 'none', 'error', 'debug'
-websocket: (false)                       // activate websocket server at port 8080
-portname:  ('/dev/ttyUSB0')              // device path to reader
-tagtype:   ('ISO15693')                  // type rfid ['ISO15693', 'ISO14443A', 'ISO14443B', 'TAGIT']
+tcpsocket:      (false)                  // {port: <port>, host: <host>} | true, defaults to localhost:4444
+websocket:      (false)                  // {port: <port>, host: <host>} | true, defaults to localhost:4444
+debug:          ('none')                 // show debug information, possible values: 'none', 'error', 'debug'
+portname:       ('/dev/ttyUSB0')         // device path to reader
+tagtype:        ('ISO15693')             // type rfid ['ISO15693', 'ISO14443A', 'ISO14443B', 'TAGIT']
 scaninterval:   (1000)                   // interval between each scan, tested down to 100ms
-readerconfig:   ('./univelop_500b.json') // path to json config for rfid commands
-length_to_read: (8)                      // total length to read from ISO15693
-bytes_per_read:  (1)                     // chunk length to read from ISO15693
+readerconfig:   ('./univelop_500b.json') // path to json config file for rfid commands
+bytes_to_read:  ('08')                   // block length to read from ISO15693
 ```
 
-For more options check the `rfid.js` file
+### example
+
+```
+rfid.init({
+  tcpsocket: {
+    port: 8888, 
+    host: 'localhost'
+  },
+  tagtype: "ISO14443A"
+});
+
+
+### TCP Socket or Websocket control
+
+```
+ * {"cmd": "SCAN-ON"}                   // start scan loop
+ * {"cmd": "SCAN-OFF"}                  // stop scan loop
+ * {"cmd": "ALARM-ON"}                  // activate alarm on all items within range
+ * {"cmd": "ALARM-OFF"}                 // deactivate alarm on all items within range
+ * {"cmd": "WRITE", "id", "<data>"}     // write to ISO15693 tag
+```
+
+### nodejs control
+
+Start scan loop;
+    rfid.startScan(function(err) {console.log(err) });
+
+Stop scan loop
+    rfid.stopScan();
+
+Deactivate alarm
+    rfid.deactivateAFI(function(err) {console.log(err) });
+
+Activate alarm
+    rfid.activateAFI(function(err) {console.log(err) });
+
+Write ISO15693 tag:
+    rfid.writeISO15693("<tag id>", "<data>", function(err) { console.log(err) });
+
+### Websocket in browser example
+
+```
+var ws = new WebSocket("ws://localhost:4444");
+ws.onopen = function(evt) {
+  console.log("connected!");
+  ws.send(JSON.stringify({cmd:"SCAN-ON"}));
+}
+
+ws.onmessage = function(evt) {
+  console.log(evt);
+};
+
+```
+
+For more info check the `rfid.js` file and the tests
 
 Note, there is work on the reader in Python:
 
