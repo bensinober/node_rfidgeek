@@ -187,30 +187,7 @@ var self = module.exports = function rfidGeek(options){
   // command execution and result callback
   // expects cmd, end of response regex & callback
   var issueCommand = require('./lib/commands.js').issueCommand;
-/*
-  var issueCommand = function(cmd, endExpr, callback) {
-    //console.log("cmd: "+cmd+"\nreg: "+endExpr);
-    reader.write(cmd, function(err) {
-      if(err){ callback(err); }
-      else {
-        var response = '';
-        (function loopCmd() {
-          if (!endExpr.test(response)) {
-            reader.once('data', function(data) {
-              response += String(data);
-              //setTimeout(function() { loopCmd(); }, 10);
-              process.nextTick(function() { loopCmd(); });
-            });
-          } else {
-            callback(null, response);
-          } 
-        //     reader.removeListener('data', loopCmd);
-        //   }
-        })();
-      }
-    });
-  }
-*/
+
   var initialize = function(cmd, callback) {
     issueCommand(reader, cmd, /\r\n/, function(err, response) {
       if (err){ callback(err)}
