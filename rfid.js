@@ -176,7 +176,8 @@ var self = module.exports = function rfidGeek(options){
       logger.log('debug', 'port closed');
     });
 
-
+  // expose reader  
+  self.reader = reader;
   }
 
   /*
@@ -538,11 +539,11 @@ var self = module.exports = function rfidGeek(options){
   //       //     reader.emit('tagfound', id);
   //       //   }
 
-  /*
-   * PUBLIC FUNCTIONS
-   */
+    /*
+     * DEFINE CLOSURE / PUBLICALLY EXPOSED FUNCTIONS
+     */
 
-  return {
+  api = {
     init: init,
     config: config,
     startScan: startScan,
@@ -589,7 +590,22 @@ var self = module.exports = function rfidGeek(options){
     close: function() {
       self.socket.close();
     }
-}
+  }
+
+  /*
+   * EXPOSED FOR TESTING ONLY
+   */
+
+  if (process.env.NODE_ENV === 'test') {
+    api._hex2ascii = hex2ascii;
+    api._reverseTag = reverseTag;
+    api._dec2hex = dec2hex;
+    api._calculateCRC = calculateCRC;
+    api._updateTagsStatus = updateTagsStatus;
+  }
+
+  /* CLOSURE RETURN */
+  return api
 }();
 
   // for browser compatibility

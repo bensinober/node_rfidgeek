@@ -1,7 +1,7 @@
 var expect = require('expect.js');
 var logger = require('../lib/logger.js');
 
-describe('logger',function() {
+describe('Logger',function() {
   it('should expose a log() function', function(){
     expect(logger.log).to.be.a('function');
   });
