@@ -2,6 +2,9 @@ var expect = require('expect.js');
 var rfid = require('../rfid');
 
 describe('Tags',function() {
+  beforeEach(function() {
+    rfid.tags = [];
+  });
 
   it('populate single tag object with status TAGS-OK if tag is present', function() {
     var tags = [ { data: { barcode: "XXXXXXXX", nitems: 1, itemno: 1 }} ];

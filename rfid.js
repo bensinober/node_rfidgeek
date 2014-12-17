@@ -43,7 +43,7 @@ var self = module.exports = function rfidGeek(options){
   /*
   * PUBLIC VARIABLES
   */
-  var socket = {},
+  var socket,
       reader,
       readerConfig,
       tagsInRange = []; // tags in range from inventory
@@ -64,8 +64,8 @@ var self = module.exports = function rfidGeek(options){
       var WebSocket = require("./lib/websocket.js");
       var ws = new WebSocket(this, logger).server;
       ws.on('ready', function(conn) {
-        self.socket = conn;
-        logger.log('debug', 'Connected to socket');
+        socket = conn;
+        logger.log("debug", 'Connected to socket');
       });
     }
 
@@ -77,8 +77,8 @@ var self = module.exports = function rfidGeek(options){
       var TCPSocket = require("./lib/tcpsocket.js");
       var tcpsocket = new TCPSocket(this, logger).server;
       tcpsocket.on('ready', function(conn) {
-        self.socket = conn;
-        logger.log('debug', 'Connected to socket');
+        socket = conn;
+        logger.log("debug", 'Connected to socket');
       });
     }  
 
@@ -103,7 +103,7 @@ var self = module.exports = function rfidGeek(options){
 
     
     reader.on('open',function() {
-      logger.log('debug', 'Port open');
+      logger.log("debug", 'Port open');
       
       reader.on('initialize', initialize);
       reader.on('initcodes', initcodes);
@@ -112,7 +112,7 @@ var self = module.exports = function rfidGeek(options){
       reader.on('readtagdata', readTagData);
       // unregister tag if removed
       reader.on('tagremoved', function() {
-        logger.log('debug', 'Tag removed');
+        logger.log("debug", 'Tag removed');
         if (config.websocket) {
           socket.sendUTF("Tag removed");
         }
@@ -126,37 +126,33 @@ var self = module.exports = function rfidGeek(options){
       reader.on('tagsfound', function( tags ) {
         if (tags.length > 0) {                         // do nothing unless tags in range
           tags = updateTagsStatus(tags);
+          logger.log("debug", "New tag(s) found!");
 
-          logger.log('debug', "New tag(s) found!");
-          if (config.websocket) {
-            socket.sendUTF(tags);
-          }
-          self.emit('tagsInRange', tags);             // emit to calling external app!
-          if (socket) {
-            tags.forEach(function(tag) {
-              if(!tag.validated) {
-                var response = { 
-                  cmd: "READ",
-                  status: tag.status,
-                  id: tag.id,
-                  data: tag.data
-                };
-                var jsonresponse = JSON.stringify(response);
-                logger.log('debug', "response to socket: "+jsonresponse);
-                socket.write(jsonresponse+"\n");
-                if (tag.status == "TAGS-OK") {
-                  tag.validated = true;
-                }
+          tags.forEach(function(tag) {
+            if(!tag.validated) {
+              var response = {
+                cmd: "READ",
+                status: tag.status,
+                id: tag.id,
+                data: tag.data
+              };
+              var jsonresponse = JSON.stringify(response);
+              console.log(jsonresponse);
+              logger.log("debug", "response to socket: "+jsonresponse);
+              if (config.websocket) {
+                socket.sendUTF(jsonresponse+"\n");
               }
-            })
-          }
-          if (config.tagtype == 'ISO15693') {           // if ISO15693 tag:
-         //   stopScan();
-            /*self.stopscan();                        //   stop scanning for tags*/
-          //  readTags(tags);                           //   start read tags content
-          }
+              if (config.websocket) {
+                socket.write(jsonresponse+"\n");
+              }
+              if (tag.status == "TAGS-OK") {
+                tag.validated = true;
+              }
+            }
+          });
+          //self.emit('tagsInRange', tags);  // emit to calling external app! DEPRECATED
         } else {
-          logger.log('debug', "no tags in range...");
+          logger.log("debug", "no tags in range...");
         }
       });
 
@@ -173,7 +169,7 @@ var self = module.exports = function rfidGeek(options){
     
     // close
     reader.on('close', function ( err ) {
-      logger.log('debug', 'port closed');
+      logger.log("debug", 'port closed');
     });
 
   // expose reader  
@@ -188,33 +184,33 @@ var self = module.exports = function rfidGeek(options){
   // expects cmd, end of response regex & callback
   var issueCommand = require('./lib/commands.js').issueCommand;
 
-  var initialize = function(cmd, callback) {
+  var initialize = function(cmd, initializeCB) {
     issueCommand(reader, cmd, /\r\n/, function(err, response) {
-      if (err){ callback(err)}
+      if (err){ initializeCB(err)}
       else {
-        logger.log('debug', 'initialized reader...')
+        logger.log("debug", 'initialized reader...')
         // initialized? emit initcodes
         reader.emit('initcodes', readerConfig.protocols[config.tagtype]['initcodes'], /\r\n/, function(err) {
-          logger.log('debug', 'initialized reader');
-          callback(null);
+          logger.log("debug", 'initialized reader');
+          initializeCB(null);
         });
       }
     });
   }
 
-  var initcodes = function(cmd, endRegex, callback) {
+  var initcodes = function(cmd, endRegex, initcodesCB) {
     issueCommand(reader, cmd['register_write_request'], /\r\n/, function(err, result) {
-      if (err){ callback(err); }
-      logger.log('debug', result);
+      if (err){ initcodesCB(err); }
+      logger.log("debug", result);
       issueCommand(reader, cmd['agc_enable'], /\r\n/, function(err, result) {
-        if (err) { callback(err); }
-        logger.log('debug', result);
+        if (err) { initcodesCB(err); }
+        logger.log("debug", result);
         issueCommand(reader, cmd['am_input'], /\r\n/, function(err, result) {
-          if (err){ callback(err); }
+          if (err){ initcodesCB(err); }
           else {
-            logger.log('debug', result); 
-            logger.log('debug', "ran initcodes!");
-            callback(null);
+            logger.log("debug", result);
+            logger.log("debug", "ran initcodes!");
+            initcodesCB(null);
           }
         });
       });
@@ -225,78 +221,85 @@ var self = module.exports = function rfidGeek(options){
   // ISO15693:
   //   single_slot: 010B000304142401000000
   //   multi_slot:  010B000304140401000000
-  var inventory = function(cmd, callback) {
-    issueCommand(reader, cmd, /\]D/, function(err, response) {
+  var inventory = function(cmd, inventoryCB) {
+    var reg;
+    if (config.tagtype == "ISO1443A") {
+      reg = /\]/;
+    } else {
+      reg = /\]D/;
+    }
+    issueCommand(reader, cmd, reg, function(err, inventoryData) {
       if (err) { 
         logger.log('error', "Error: "+err);
+        inventoryCB(err);
       } else {
-        reader.emit('checkfortags', response, function(err) {
-          if(err) { callback(err); }
-          callback(null);
+        reader.emit('checkfortags', inventoryData, function(err) {
+          if(err) { inventoryCB(err); }
+          inventoryCB(null);
         });
       }
     });
   }
   
   // END TAG LOOP FUNCTIONS
-  var checkForTags = function(inventory, callback) {
+  var checkForTags = function(inventoryData, checkForTagsCB) {
+    // TODO: fix for other tags than ISO15693
     var tagregex      = /\[([0-9A-F]{16})\,[0-9A-F]{2}/g;  // tag id's are      [ID,POS]
     var conflictregex = /\[([0-9A-F]{16})\,z/g;            // conflict id's are [ID,z]   - ignored for now
-    var tags = []
+    var tags = [];
     var match;
-
-    while(match = tagregex.exec(inventory) ) {
+    while(match = tagregex.exec(inventoryData) ) {
       tags.push(match[1]);
     }
     
     if(tags.length > 0) {
-      //self.stopscan(function(err) {
-      //  if (err) { logger.log('error', 'error stopping scanning: '+err); }
-      //});
+
       tags.forEach(function(tag) {
         // append only tags that isn't already in array
         if (!tagsInRange.some(function(some) { return some.id === tag }) ) {
           tagsInRange.push({id: tag});
         }
       });
-      //readerState = 'readtags';  // toggle readerstate
-      logger.log('debug', 'tags in range: '+tagsInRange);
+      logger.log("debug", 'tags in range: '+tagsInRange);
       reader.emit('readtagdata', tagsInRange, function(err) {
-        if(err) { callback(err) };
-        callback();
+        if(err) { checkForTagsCB(err) };
+        checkForTagsCB();
       });
     } else {
-      logger.log('debug', 'no tags in range!');
+      logger.log("debug", 'no tags in range!');
     }
   }
     
 
   // READ TAG DATA
-  var readTagData = function(tags, callback) {
+  var readTagData = function(tags, readTagDataCB) {
     var offset = '00';
     var i = 0;
     (function loopFn() {
-      logger.log('debug', "sending readtagdata event, id: "+tags[i].id );
-      var cmd = ['01','14','00','03','04','18','20','23', tags[i].id, offset, blocks_to_read, '00', '00'].join('');
-      logger.log('debug', "offset: "+offset+ " id: "+tags[i].id+" tagdata cmd: " + cmd );
-      issueCommand(reader, cmd, /\]/, function(err, response) {
-        if(err) { callback(err) }
-        if(/\[z\]/.test(response) || /\[\]/.test(response) ) {
-          callback("conflict in tags!");
-        }
-        logger.log('debug', "tagread response: "+response); 
-        var rfiddata = response.match(/\[00(.+)\]/);     // strip initial 00 response
-        if (rfiddata) {
-          logger.log('debug', "response data! "+rfiddata[1]);
-          reader.emit('rfiddata', rfiddata[1]);
+      logger.log("debug", "sending readtagdata event, id: "+tags[i].id );
+      var cmd = ['01','14','00','03','04','18','20','23', tags[i].id, offset, config.blocks_to_read, '00', '00'].join('');
+      logger.log("debug", "offset: "+offset+ " id: "+tags[i].id+" tagdata cmd: " + cmd );
+      issueCommand(reader, cmd, /\]/, function(err, tagResponse) {
+        if (err) { readTagDataCB(err) }
+        logger.log("debug", "tagread response: "+tagResponse);
+        if (/\[z\]/.test(tagResponse)) {
+          readTagDataCB("conflict in tags!");
+        } else if (/\[\]/.test(tagResponse)) {
+          logger.log("debug", "empty response");
         } else {
-          callback("some unknown error");
+          var rfiddata = tagResponse.match(/\[00(.+)\]/);     // strip initial 00 response
+          if (rfiddata) {
+            logger.log("debug", "response data! "+rfiddata[1]);
+            reader.emit("rfiddata", rfiddata[1]);
+          } else {
+            readTagDataCB("Invalid data response: "+tagResponse);
+          }
         }
       });
       i++;
       if (i<tags.length) { setTimeout(loopFn, 100); }
     })();
-    callback(null);
+    readTagDataCB(null);
   }
 
   /*
@@ -304,9 +307,9 @@ var self = module.exports = function rfidGeek(options){
    *                  - hopefully tags come in right order as there is no async way to ensure
    *                  - maybe handle data according to self.readerState?
    */  
-  var rfidData = function(data, callback) {
+  var rfidData = function(data) {
     var tagdata = hex2ascii(data);
-    logger.log('debug', "rfiddata received: " + tagdata);
+    logger.log("debug", "rfiddata received: " + tagdata);
     // append rfiddata to tags missing data, hopefully they come in right order
     tagsInRange.some(function(item) { 
       if (!item.data) { 
@@ -322,7 +325,7 @@ var self = module.exports = function rfidGeek(options){
       }
     });
     if ( tagsInRange.every(function(item) { return (item.data) }) ) {
-      logger.log('debug', "all tags read!\n" + tagsInRange );
+      logger.log("debug", "all tags read!\n" + tagsInRange );
       reader.emit('tagsfound', tagsInRange);
     }
   }
@@ -395,22 +398,26 @@ var self = module.exports = function rfidGeek(options){
     return tags;
   }
 
-  var startScan = function(callback) { 
+  var startScan = function(startScanCB) {
     // run inventory check in intervals
     scanLoop = setInterval(function() { 
       inventory(readerConfig.protocols[config.tagtype]['inventory'], function(err) {
         if (err) { 
-          logger.log('error', "error: "+err); 
-          stopScan(function(err) {
+          logger.log('error', "error: "+err);
+          logger.log('error', "restarting scan loop...");
+          // restart loop here
+          stopScan();
+          startScan(function(err) {
             if(err) {
-              logger.log('error', 'Error starting scan loop: '+err); 
-              callback(err);
+              logger.log('error', 'Error restarting scan loop: '+err);
+              // Error - break out of loop
+              startScanCB(err);
             }
           });
         }
       });
     }, config.scaninterval );
-    callback(); //success
+    startScanCB(); //success
   }
 
   var stopScan = function() {
@@ -429,7 +436,7 @@ var self = module.exports = function rfidGeek(options){
       issueCommand(reader, cmd, /\]/, function(err, response) {
         if (err) { done(err); }
         if (/\[00\]/.test(response)) {
-          logger.log('debug', 'deactivated alarm OK: '+tag.id+' response: '+response);
+          logger.log("debug", 'deactivated alarm OK: '+tag.id+' response: '+response);
           done();
         } else {
           logger.log('error', 'failed to deactivate alarm: '+tag.id+' - response: '+response);
@@ -446,7 +453,7 @@ var self = module.exports = function rfidGeek(options){
       issueCommand(reader, cmd, /\]/, function(err, response) {
         if (err) { done(err); }
         if (/\[00\]/.test(response)) {
-          logger.log('debug', 'activated alarm OK: '+tag.id+' response: '+response);
+          logger.log("debug", 'activated alarm OK: '+tag.id+' response: '+response);
           done();
         } else {
           logger.log('error', 'failed to activate alarm: '+tag.id+' - response: '+response);
@@ -480,7 +487,7 @@ var self = module.exports = function rfidGeek(options){
 
       (function loopWrite() {
         var str = updatedCRC.slice(offset*4,offset*4+4).join('');
-        logger.log('debug', "writing to tag: "+str+" offset: "+offset+" id: "+id );
+        logger.log("debug", "writing to tag: "+str+" offset: "+offset+" id: "+id );
         var cmd = ['01','17','00','03','04','18','20','21', id, dec2hex(offset), str, '00', '00'].join(''); 
         issueCommand(reader, cmd, /\]/, function(err, response) {
           if(err) { done(err) }
@@ -494,7 +501,7 @@ var self = module.exports = function rfidGeek(options){
               }
             });
           }
-          logger.log('debug', 'written data OK: '+str+' response: '+response);
+          logger.log("debug", 'written data OK: '+str+' response: '+response);
         });
         offset++;
         if (offset<chunks) { 
@@ -512,7 +519,7 @@ var self = module.exports = function rfidGeek(options){
   //       //   var tag = data.match(/\[(.+)\]/);            // tag is anything between brackets
   //       //   if (tag && tag[1]) {
   //       //     id = reverseTag(tag[1]);
-  //       //     logger.log('debug', "tag ID: "+id);
+  //       //     logger.log("debug", "tag ID: "+id);
   //       //     reader.emit('tagfound', id);
   //       //   }
 
@@ -565,7 +572,7 @@ var self = module.exports = function rfidGeek(options){
     },
 
     close: function() {
-      self.socket.close();
+      socket.close();
     }
   }
 
@@ -579,6 +586,7 @@ var self = module.exports = function rfidGeek(options){
     api._dec2hex = dec2hex;
     api._calculateCRC = calculateCRC;
     api._updateTagsStatus = updateTagsStatus;
+    api._checkForTags = checkForTags;
   }
 
   /* CLOSURE RETURN */
