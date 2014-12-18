@@ -12,36 +12,29 @@
  *  24-30 : library code
  */
 
-var Rfidgeek = require('../rfid.js');
+var rfid = require('rfidgeek');
 
-// instantiating a reader with websocket server
-var rfid = new Rfidgeek({
+// initialize with tcpsocket options
+rfid.init({
   debug: 'error',
-  websocket: false,
+  tcpsocket: { port: 6767, host: 'localhost'},
+  scaninterval: 1000,
   tagtype: 'ISO15693',
-  bytes_to_read: 1,
-  length_to_read: 26  // 26 blocks (=52 bytes) to grab entire content
+  blocks_to_read: '08' // 8+1 blocks * 4 bytes = 36 bytes
 });
 
-// create event listeners
+// This adds a TCPSOCKET listener that can now be accessed on localhost:6767
+//
+// Connect via telnet and start reader scanning with
+// {"cmd":"SCAN-ON"}
+//
+// You should now receive a verification
+// {"cmd":"SCAN-ON", "status": "OK"}
+//
+// And you should now receive JSON data of the ISO15693 tags within range
+
+// CREATING EVENT LISTENERS
+// 
 rfid.on('tagfound', function(tag) {
   console.log("Tag received in external app: "+tag);
 });
-
-rfid.on('rfiddata', function(data) {
-   json = {
-      itemno: data.substring(1,2).charCodeAt(0),
-      totalitems: data.substring(2,3).charCodeAt(0),
-      barcode: data.substring(5,19),
-      md5sum: data.substring(19,21),
-      country: data.substring(21,23),
-      library: data.substring(23,31)
-    }
-  console.log(json);
-});
-
-// init reader
-rfid.init();
-
-// start scan loop
-rfid.start();
