@@ -22,7 +22,10 @@
   "scripts": {
     "test": "make test"
   },
-  "license": "MIT",
+  "license": {
+    "type": "MIT",
+    "url": "https://github.com/bensinober/node_rfidgeek/blob/master/LICENSE"
+  },
   "keywords": [
     "rfid",
     "socket",
