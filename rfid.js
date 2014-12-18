@@ -121,9 +121,7 @@ var self = module.exports = function rfidGeek(options){
       
       // INVENTORY DONE, TAGS FOUND AND READ. TIME TO EMIT RESULTS 
       // updateTagsStatus fixes item counts
-      // start inventory if ISO15693 tag, else ignore
-      // all tags in tagsInRange should be read
-      reader.on('tagsfound', function( tags ) {
+      reader.on('ISO15693tagsfound', function( tags ) {
         if (tags.length > 0) {                         // do nothing unless tags in range
           tags = updateTagsStatus(tags);
           logger.log("debug", "New tag(s) found!");
@@ -137,12 +135,11 @@ var self = module.exports = function rfidGeek(options){
                 data: tag.data
               };
               var jsonresponse = JSON.stringify(response);
-              console.log(jsonresponse);
               logger.log("debug", "response to socket: "+jsonresponse);
               if (config.websocket) {
                 socket.sendUTF(jsonresponse+"\n");
               }
-              if (config.websocket) {
+              if (config.tcpsocket) {
                 socket.write(jsonresponse+"\n");
               }
               if (tag.status == "TAGS-OK") {
@@ -156,6 +153,29 @@ var self = module.exports = function rfidGeek(options){
         }
       });
 
+      reader.on('NFCtagsfound', function( tags ) {
+        if (tags.length > 0) {                         // do nothing unless tags in range
+          logger.log("debug", "New tag(s) found!");
+
+          tags.forEach(function(tag) {
+            var response = {
+              cmd: "READ",
+              id: reverseTag(tag.id.slice(0,-1))
+            };
+            var jsonresponse = JSON.stringify(response);
+            logger.log("debug", "response to socket: "+jsonresponse);
+            if (config.websocket) {
+              socket.sendUTF(jsonresponse+"\n");
+            }
+            if (config.tcpsocket) {
+              socket.write(jsonresponse+"\n");
+            }
+          });
+        } else {
+          logger.log("debug", "no tags in range...");
+        }
+      });
+      
       // EMIT INITIALIZE    
       reader.emit('initialize', readerConfig.initialize['init'], function(err, result) {
         if (err) { logger.log('error', 'error initializing: '+err); }
@@ -222,12 +242,17 @@ var self = module.exports = function rfidGeek(options){
   //   single_slot: 010B000304142401000000
   //   multi_slot:  010B000304140401000000
   var inventory = function(cmd, inventoryCB) {
-    var reg;
-    if (config.tagtype == "ISO1443A") {
-      reg = /\]/;
-    } else {
-      reg = /\]D/;
+    switch (config.tagtype) {
+      case "ISO15693":
+        var reg = /\]D/;                          // ISO15693 returns multi tags inside square brackets
+        break;                                    //   terminated by 'D'
+      case "ISO14443A":
+        var reg = /14443A\ REQA\.\r\n.+\r\n/;     // ISO14443A always return two lines
+        break;
+      default:
+        var reg = /\r\n/;
     }
+
     issueCommand(reader, cmd, reg, function(err, inventoryData) {
       if (err) { 
         logger.log('error', "Error: "+err);
@@ -243,28 +268,44 @@ var self = module.exports = function rfidGeek(options){
   
   // END TAG LOOP FUNCTIONS
   var checkForTags = function(inventoryData, checkForTagsCB) {
-    // TODO: fix for other tags than ISO15693
-    var tagregex      = /\[([0-9A-F]{16})\,[0-9A-F]{2}/g;  // tag id's are      [ID,POS]
-    var conflictregex = /\[([0-9A-F]{16})\,z/g;            // conflict id's are [ID,z]   - ignored for now
+    switch (config.tagtype) {
+      case "ISO15693":
+        var tagregex      = /\[([0-9A-F]{16})\,[0-9A-F]{2}/g;  // tag id's are      [ID,POS]
+        var conflictregex = /\[([0-9A-F]{16})\,z/g;            // conflict id's are [ID,z]   - ignored for now
+        break;
+      case "ISO14443A":
+        var tagregex      = /\[(.*?)\]/g;                      // tag id's are      (TYPE)[ID]
+        break;
+    }
+
     var tags = [];
     var match;
     while(match = tagregex.exec(inventoryData) ) {
       tags.push(match[1]);
     }
-    
     if(tags.length > 0) {
-
+      // append tags that is not already registered
       tags.forEach(function(tag) {
-        // append only tags that isn't already in array
         if (!tagsInRange.some(function(some) { return some.id === tag }) ) {
           tagsInRange.push({id: tag});
         }
       });
-      logger.log("debug", 'tags in range: '+tagsInRange);
-      reader.emit('readtagdata', tagsInRange, function(err) {
-        if(err) { checkForTagsCB(err) };
-        checkForTagsCB();
+      // then remove registered tags that are no longer present
+      tagsInRange = tagsInRange.filter(function(tag) { 
+        return tags.indexOf(tag.id) >= 0; 
       });
+
+      logger.log("debug", 'tags in range: '+tagsInRange);
+      // Only read tag data for ISO15693
+      if (config.tagtype == "ISO15693") {
+        reader.emit('readtagdata', tagsInRange, function(err) {
+          if(err) { checkForTagsCB(err) };
+          checkForTagsCB();
+        });
+      } else {
+        reader.emit('NFCtagsfound', tagsInRange);
+        checkForTagsCB(); // return success
+      }
     } else {
       logger.log("debug", 'no tags in range!');
     }
@@ -326,7 +367,7 @@ var self = module.exports = function rfidGeek(options){
     });
     if ( tagsInRange.every(function(item) { return (item.data) }) ) {
       logger.log("debug", "all tags read!\n" + tagsInRange );
-      reader.emit('tagsfound', tagsInRange);
+      reader.emit('ISO15693tagsfound', tagsInRange);
     }
   }
 
