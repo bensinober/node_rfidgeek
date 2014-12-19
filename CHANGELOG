@@ -1,5 +1,9 @@
 CHANGELOG
-0.1.1: 2014-12-19
+0.1.2: 2014-12-19
+  Small fix for eventsemitter
+  Add tests for eventsemitter
+
+0.1.1: 2014-12-18
   Fourth npm package build
   Lots of code improvement
   Added lots of tests
