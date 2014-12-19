@@ -137,7 +137,7 @@ var self = module.exports = function rfidGeek(options){
               jsonresponse = JSON.stringify(response);
               logger.log("debug", "response to socket: "+jsonresponse);
               if (config.websocket) {
-                socket.sendUTF(jsonresponse+"\n");
+                socket.send(jsonresponse+"\n");
               }
               if (config.tcpsocket) {
                 socket.write(jsonresponse+"\n");
@@ -165,7 +165,7 @@ var self = module.exports = function rfidGeek(options){
             jsonresponse = JSON.stringify(response);
             logger.log("debug", "response to socket: "+jsonresponse);
             if (config.websocket) {
-              socket.sendUTF(jsonresponse+"\n");
+              socket.send(jsonresponse+"\n");
             }
             if (config.tcpsocket) {
               socket.write(jsonresponse+"\n");
