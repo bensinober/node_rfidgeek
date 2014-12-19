@@ -125,7 +125,7 @@ var self = module.exports = function rfidGeek(options){
         if (tags.length > 0) {                         // do nothing unless tags in range
           tags = updateTagsStatus(tags);
           logger.log("debug", "New tag(s) found!");
-
+          var jsonresponse
           tags.forEach(function(tag) {
             if(!tag.validated) {
               var response = {
@@ -134,7 +134,7 @@ var self = module.exports = function rfidGeek(options){
                 id: tag.id,
                 data: tag.data
               };
-              var jsonresponse = JSON.stringify(response);
+              jsonresponse = JSON.stringify(response);
               logger.log("debug", "response to socket: "+jsonresponse);
               if (config.websocket) {
                 socket.sendUTF(jsonresponse+"\n");
@@ -147,7 +147,7 @@ var self = module.exports = function rfidGeek(options){
               }
             }
           });
-          //self.emit('tagsInRange', tags);  // emit to calling external app! DEPRECATED
+          reader.emit('tagsInRange', jsonresponse+"\n");  // emit to subscribers
         } else {
           logger.log("debug", "no tags in range...");
         }
@@ -156,13 +156,13 @@ var self = module.exports = function rfidGeek(options){
       reader.on('NFCtagsfound', function( tags ) {
         if (tags.length > 0) {                         // do nothing unless tags in range
           logger.log("debug", "New tag(s) found!");
-
+          var jsonresponse
           tags.forEach(function(tag) {
             var response = {
               cmd: "READ",
               id: reverseTag(tag.id.slice(0,-1))
             };
-            var jsonresponse = JSON.stringify(response);
+            jsonresponse = JSON.stringify(response);
             logger.log("debug", "response to socket: "+jsonresponse);
             if (config.websocket) {
               socket.sendUTF(jsonresponse+"\n");
@@ -171,6 +171,7 @@ var self = module.exports = function rfidGeek(options){
               socket.write(jsonresponse+"\n");
             }
           });
+          reader.emit('tagsInRange', jsonresponse+"\n");  // emit to subscribers
         } else {
           logger.log("debug", "no tags in range...");
         }
