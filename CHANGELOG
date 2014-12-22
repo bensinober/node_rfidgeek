@@ -1,4 +1,9 @@
 CHANGELOG
+0.1.4: 2014-12-22
+  Stable fix
+  Both websocket and tcpsocket can be used simultaneously
+  Fixed examples/example_iso15693
+
 0.1.3: 2014-12-19
   Bugfix release
   Deprecated ws.sendUTF

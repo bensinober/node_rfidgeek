@@ -43,7 +43,7 @@ var self = module.exports = function rfidGeek(options){
   /*
   * PUBLIC VARIABLES
   */
-  var socket,
+  var sockets = {},
       reader,
       readerConfig,
       tagsInRange = []; // tags in range from inventory
@@ -64,7 +64,7 @@ var self = module.exports = function rfidGeek(options){
       var WebSocket = require("./lib/websocket.js");
       var ws = new WebSocket(this, logger).server;
       ws.on('ready', function(conn) {
-        socket = conn;
+        sockets.websocket = conn;
         logger.log("debug", 'Connected to socket');
       });
     }
@@ -77,7 +77,7 @@ var self = module.exports = function rfidGeek(options){
       var TCPSocket = require("./lib/tcpsocket.js");
       var tcpsocket = new TCPSocket(this, logger).server;
       tcpsocket.on('ready', function(conn) {
-        socket = conn;
+        sockets.tcpsocket = conn;
         logger.log("debug", 'Connected to socket');
       });
     }  
@@ -113,8 +113,8 @@ var self = module.exports = function rfidGeek(options){
       // unregister tag if removed
       reader.on('tagremoved', function() {
         logger.log("debug", 'Tag removed');
-        if (config.websocket) {
-          socket.sendUTF("Tag removed");
+        if (sockets.websocket) {
+          sockets.websocket.send("Tag removed");
         }
         //tagData = '';
       });
@@ -125,7 +125,7 @@ var self = module.exports = function rfidGeek(options){
         if (tags.length > 0) {                         // do nothing unless tags in range
           tags = updateTagsStatus(tags);
           logger.log("debug", "New tag(s) found!");
-          var jsonresponse
+          var jsonresponse;
           tags.forEach(function(tag) {
             if(!tag.validated) {
               var response = {
@@ -136,18 +136,19 @@ var self = module.exports = function rfidGeek(options){
               };
               jsonresponse = JSON.stringify(response);
               logger.log("debug", "response to socket: "+jsonresponse);
-              if (config.websocket) {
-                socket.send(jsonresponse+"\n");
+              if (sockets.websocket) {
+                sockets.websocket.send(jsonresponse+"\n");
               }
-              if (config.tcpsocket) {
-                socket.write(jsonresponse+"\n");
+              if (sockets.tcpsocket) {
+                sockets.tcpsocket.write(jsonresponse+"\n");
               }
+              // emit to event subscribers
+              reader.emit('tagsInRange', jsonresponse+"\n");  // emit to subscribers
               if (tag.status == "TAGS-OK") {
                 tag.validated = true;
               }
             }
           });
-          reader.emit('tagsInRange', jsonresponse+"\n");  // emit to subscribers
         } else {
           logger.log("debug", "no tags in range...");
         }
@@ -158,20 +159,23 @@ var self = module.exports = function rfidGeek(options){
           logger.log("debug", "New tag(s) found!");
           var jsonresponse
           tags.forEach(function(tag) {
-            var response = {
-              cmd: "READ",
-              id: reverseTag(tag.id.slice(0,-1))
-            };
-            jsonresponse = JSON.stringify(response);
-            logger.log("debug", "response to socket: "+jsonresponse);
-            if (config.websocket) {
-              socket.send(jsonresponse+"\n");
-            }
-            if (config.tcpsocket) {
-              socket.write(jsonresponse+"\n");
+            if(!tag.validated) {
+              var response = {
+                cmd: "READ",
+                id: reverseTag(tag.id.slice(0,-1))
+              };
+              jsonresponse = JSON.stringify(response);
+              logger.log("debug", "response to socket: "+jsonresponse);
+              if (configsockets.websocket) {
+                sockets.websocket.send(jsonresponse+"\n");
+              }
+              if (sockets.tcpsocket) {
+                sockets.tcpsocket.write(jsonresponse+"\n");
+              }
+              reader.emit('tagsInRange', jsonresponse+"\n");  // emit to subscribers
+              tag.validated = true;
             }
           });
-          reader.emit('tagsInRange', jsonresponse+"\n");  // emit to subscribers
         } else {
           logger.log("debug", "no tags in range...");
         }
@@ -574,7 +578,7 @@ var self = module.exports = function rfidGeek(options){
     config: config,
     startScan: startScan,
     stopScan: stopScan,
-    socket: socket,
+    sockets: sockets,
     tags: tagsInRange,
     // this function writes data to ISO15693 chip
     writeISO15693: function(tag, data, callback) {
@@ -614,7 +618,12 @@ var self = module.exports = function rfidGeek(options){
     },
 
     close: function() {
-      socket.close();
+      if(sockets.websocket) {
+        sockets.websocket.close();
+      }
+      if(sockets.tcpsocket) {
+        sockets.tcpsocket.close();
+      }
     }
   }
 
